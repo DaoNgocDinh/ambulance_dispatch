@@ -17,21 +17,31 @@ import numpy as np
 
 
 CONGESTION_CLEAR: int = 1       # 1: Thông thoáng
-CONGESTION_MODERATE: int = 2    # 2: Đông đúc
-CONGESTION_HEAVY: int = 3       # 3: Ùn tắc
+CONGESTION_MODERATE: int = 2    # 2: Bình thường
+CONGESTION_HEAVY: int = 3       # 3: Tắc
 
 CONGESTION_NAMES: Dict[int, str] = {
-    CONGESTION_CLEAR: "Thông thoáng (1)",
-    CONGESTION_MODERATE: "Đông đúc (2)",
-    CONGESTION_HEAVY: "Ùn tắc (3)",
+    CONGESTION_CLEAR: "Thông thoáng",
+    CONGESTION_MODERATE: "Bình thường",
+    CONGESTION_HEAVY: "Tắc",
 }
 
-# Tốc độ di chuyển ước tính theo độ tắc đường (km/h)
-CONGESTION_SPEEDS: Dict[int, float] = {
-    CONGESTION_CLEAR: 50.0,
-    CONGESTION_MODERATE: 30.0,
-    CONGESTION_HEAVY: 15.0,
+# Vận tốc quy định theo từng vùng (km/h)
+# "Vận tốc cho phép trong trung tâm luôn thấp hơn xa trung tâm"
+SPEEDS_CENTER: Dict[int, float] = {
+    CONGESTION_CLEAR: 40.0,
+    CONGESTION_MODERATE: 25.0,
+    CONGESTION_HEAVY: 12.0,
 }
+
+SPEEDS_OUTER: Dict[int, float] = {
+    CONGESTION_CLEAR: 60.0,
+    CONGESTION_MODERATE: 40.0,
+    CONGESTION_HEAVY: 20.0,
+}
+
+# Tương thích ngược mặc định
+CONGESTION_SPEEDS = SPEEDS_OUTER
 
 
 @dataclass
@@ -44,6 +54,7 @@ class DirectedEdge:
     length: float                      # Chiều dài cung đường (km)
     congestion: int = CONGESTION_CLEAR # Độ tắc in {1, 2, 3}
     name: str = ""                     # Tên cung đường
+    is_center: bool = False            # Tuyến đường thuộc vùng lõi trung tâm
 
     @property
     def edge_key(self) -> tuple[int, int]:
@@ -52,8 +63,9 @@ class DirectedEdge:
 
     @property
     def speed(self) -> float:
-        """Vận tốc lưu thông hiện tại (km/h) dựa theo mức độ tắc."""
-        return CONGESTION_SPEEDS.get(self.congestion, 40.0)
+        """Vận tốc lưu thông hiện tại (km/h) dựa theo mức độ tắc và phân vùng."""
+        speeds = SPEEDS_CENTER if self.is_center else SPEEDS_OUTER
+        return speeds.get(self.congestion, 30.0)
 
     @property
     def travel_time_hours(self) -> float:
@@ -83,25 +95,38 @@ class DirectedEdge:
     ) -> int:
         """
         Cập nhật độ tắc đường ngẫu nhiên theo chuỗi Markov thời gian thực.
-        Phân biệt xác suất trong giờ bình thường và giờ cao điểm.
+        - Tỉ lệ chuyển đổi trạng thái tắc tăng khi về gần trung tâm và giảm khi càng xa trung tâm.
         """
         curr = self.congestion - 1  # 0, 1, 2 cho indexing
 
-        if rush_hour:
-            # Giờ cao điểm: xác suất tăng tắc đường cao hơn
-            # Ma trận chuyển trạng thái P(c_{t+1} | c_t)
-            trans = [
-                [0.40, 0.45, 0.15],  # Từ 1 (Thông thoáng)
-                [0.15, 0.50, 0.35],  # Từ 2 (Đông)
-                [0.05, 0.35, 0.60],  # Từ 3 (Ùn tắc)
-            ]
+        if self.is_center:
+            # Gần trung tâm: Tỉ lệ tắc tăng cao
+            if rush_hour:
+                trans = [
+                    [0.30, 0.40, 0.30],  # Từ 1 (Thông thoáng)
+                    [0.10, 0.45, 0.45],  # Từ 2 (Bình thường)
+                    [0.02, 0.28, 0.70],  # Từ 3 (Tắc)
+                ]
+            else:
+                trans = [
+                    [0.45, 0.35, 0.20],  # Từ 1 (Thông thoáng)
+                    [0.20, 0.50, 0.30],  # Từ 2 (Bình thường)
+                    [0.05, 0.35, 0.60],  # Từ 3 (Tắc)
+                ]
         else:
-            # Giờ bình thường: xác suất thông thoáng cao hơn
-            trans = [
-                [0.75, 0.20, 0.05],  # Từ 1 (Thông thoáng)
-                [0.35, 0.50, 0.15],  # Từ 2 (Đông)
-                [0.20, 0.50, 0.30],  # Từ 3 (Ùn tắc)
-            ]
+            # Xa trung tâm: Tỉ lệ tắc giảm, thông thoáng cao hơn
+            if rush_hour:
+                trans = [
+                    [0.55, 0.30, 0.15],  # Từ 1 (Thông thoáng)
+                    [0.25, 0.45, 0.30],  # Từ 2 (Bình thường)
+                    [0.10, 0.45, 0.45],  # Từ 3 (Tắc)
+                ]
+            else:
+                trans = [
+                    [0.70, 0.22, 0.08],  # Từ 1 (Thông thoáng)
+                    [0.35, 0.45, 0.20],  # Từ 2 (Bình thường)
+                    [0.20, 0.50, 0.30],  # Từ 3 (Tắc)
+                ]
 
         next_idx = int(rng.choice([0, 1, 2], p=trans[curr]))
         self.congestion = next_idx + 1

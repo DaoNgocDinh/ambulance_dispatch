@@ -58,6 +58,14 @@ class CityMap:
 
         # Bước thời gian mô phỏng biến thiên giao thông
         self.time_step: int = 0
+        self.last_traffic_transitions: Dict[str, List[str]] = {
+            "tac_to_binh_thuong": [],
+            "thong_thoang_to_binh_thuong": [],
+            "binh_thuong_to_tac": [],
+            "binh_thuong_to_thong_thoang": [],
+            "tac_to_thong_thoang": [],
+            "thong_thoang_to_tac": [],
+        }
 
         # Khởi tạo bản đồ
         self._build_80_nodes()
@@ -297,12 +305,14 @@ class CityMap:
             raw_dist = math.hypot(node_u.x - node_v.x, node_u.y - node_v.y)
             length_km = round(float(raw_dist), 2)
 
+            is_center_edge = (u <= 20 and v <= 20)
             edge_uv = DirectedEdge(
                 from_node=u,
                 to_node=v,
                 length=length_km,
                 congestion=CONGESTION_CLEAR,
                 name=f"{road_name} ({u}->{v})",
+                is_center=is_center_edge,
             )
             edge_vu = DirectedEdge(
                 from_node=v,
@@ -310,6 +320,7 @@ class CityMap:
                 length=length_km,
                 congestion=CONGESTION_CLEAR,
                 name=f"{road_name} ({v}->{u})",
+                is_center=is_center_edge,
             )
 
             self.edges[(u, v)] = edge_uv
@@ -337,6 +348,7 @@ class CityMap:
             road_length=edge_19_3.length,
             distance_from_start=dist_1,
             coord=(round(h1_x, 2), round(h1_y, 2)),
+            handover_time=3.0,
         )
 
         # ==================== BỆNH VIỆN 2 (GẦN TRUNG TÂM) ====================
@@ -354,6 +366,7 @@ class CityMap:
             road_length=edge_4_9.length,
             distance_from_start=dist_2,
             coord=(round(h2_x, 2), round(h2_y, 2)),
+            handover_time=4.0,
         )
 
         # ==================== BỆNH VIỆN 3 (XA TRUNG TÂM - PHÍA BẮC) ====================
@@ -371,6 +384,7 @@ class CityMap:
             road_length=edge_21_24.length,
             distance_from_start=dist_3,
             coord=(round(h3_x, 2), round(h3_y, 2)),
+            handover_time=5.0,
         )
 
         # ==================== BỆNH VIỆN 4 (XA TRUNG TÂM - PHÍA TÂY NAM) ====================
@@ -388,6 +402,7 @@ class CityMap:
             road_length=edge_62_65.length,
             distance_from_start=dist_4,
             coord=(round(h4_x, 2), round(h4_y, 2)),
+            handover_time=4.0,
         )
 
     # ========================================================================
@@ -401,15 +416,51 @@ class CityMap:
             edge.congestion = level
 
     def step_traffic(self, rush_hour: Optional[bool] = None) -> Dict[Tuple[int, int], int]:
-        """Cập nhật độ tắc đường ngẫu nhiên theo chuỗi Markov."""
+        """
+        Cập nhật độ tắc đường ngẫu nhiên theo chuỗi Markov và thống kê biến thiên.
+        Thống kê 6 kiểu chuyển đổi phục vụ ghi log theo yêu cầu:
+        - Từ tắc -> bình thường (3 -> 2)
+        - Từ thông thoáng -> bình thường (1 -> 2)
+        - Từ bình thường -> tắc (2 -> 3)
+        - Từ bình thường -> thông thoáng (2 -> 1)
+        - Từ tắc -> thông thoáng (3 -> 1)
+        - Từ thông thoáng -> tắc (1 -> 3)
+        """
         self.time_step += 1
         if rush_hour is None:
             rush_hour = 10 <= (self.time_step % 40) <= 25
 
+        transitions: Dict[str, List[str]] = {
+            "tac_to_binh_thuong": [],
+            "thong_thoang_to_binh_thuong": [],
+            "binh_thuong_to_tac": [],
+            "binh_thuong_to_thong_thoang": [],
+            "tac_to_thong_thoang": [],
+            "thong_thoang_to_tac": [],
+        }
+
         current_traffic: Dict[Tuple[int, int], int] = {}
         for key, edge in self.edges.items():
-            current_traffic[key] = edge.update_congestion_markov(self.rng, rush_hour=rush_hour)
+            old_lvl = edge.congestion
+            new_lvl = edge.update_congestion_markov(self.rng, rush_hour=rush_hour)
+            current_traffic[key] = new_lvl
 
+            u, v = key
+            road_lbl = f"N{u}->N{v}"
+            if old_lvl == 3 and new_lvl == 2:
+                transitions["tac_to_binh_thuong"].append(road_lbl)
+            elif old_lvl == 1 and new_lvl == 2:
+                transitions["thong_thoang_to_binh_thuong"].append(road_lbl)
+            elif old_lvl == 2 and new_lvl == 3:
+                transitions["binh_thuong_to_tac"].append(road_lbl)
+            elif old_lvl == 2 and new_lvl == 1:
+                transitions["binh_thuong_to_thong_thoang"].append(road_lbl)
+            elif old_lvl == 3 and new_lvl == 1:
+                transitions["tac_to_thong_thoang"].append(road_lbl)
+            elif old_lvl == 1 and new_lvl == 3:
+                transitions["thong_thoang_to_tac"].append(road_lbl)
+
+        self.last_traffic_transitions = transitions
         return current_traffic
 
     def set_edge_congestion(self, u: int, v: int, level: int) -> None:
@@ -500,6 +551,75 @@ class CityMap:
             "distance_from_start_node": hosp.distance_from_start,
             "total_cost": round(total_cost, 3),
             "cost_unit": "phút" if by_travel_time else "km",
+        }
+
+    def route_from_road_to_road(
+        self,
+        start_edge: Tuple[int, int],
+        start_dist: float,
+        dest_edge: Tuple[int, int],
+        dest_dist: float,
+        by_travel_time: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Tìm lộ trình chi tiết từ một vị trí trên cung đường start_edge
+        đến một vị trí trên cung đường dest_edge.
+        Các phương án di chuyển tuân thủ yêu cầu:
+        - Đi thẳng trên cùng cung đường (nếu start_edge == dest_edge và start_dist <= dest_dist).
+        - Rẽ sang đường mới tại các nút giao.
+        - Tới cuối đường quay đầu chọn tuyến đường khác (U-turn qua nút v_start).
+        """
+        u_start, v_start = start_edge
+        u_dest, v_dest = dest_edge
+
+        e_start = self.edges[start_edge]
+        e_dest = self.edges[dest_edge]
+
+        # Trường hợp 1: Cùng trên 1 cung đường và điểm đến ở phía trước
+        if start_edge == dest_edge and start_dist <= dest_dist:
+            dist_leg = dest_dist - start_dist
+            speed = e_start.speed
+            time_leg = (dist_leg / speed) * 60.0
+            return {
+                "edges_path": [start_edge],
+                "total_time_minutes": round(time_leg, 3),
+                "total_distance_km": round(dist_leg, 3),
+                "start_edge": start_edge,
+                "dest_edge": dest_edge,
+                "dest_dist": dest_dist,
+            }
+
+        # Trường hợp 2: Đi tiếp tới cuối cung đường hiện tại (nút v_start),
+        # sau đó dùng Dijkstra từ v_start tới u_dest, rồi đi dest_dist trên dest_edge
+        rem_start_dist = max(0.0, e_start.length - start_dist)
+        rem_start_time = (rem_start_dist / e_start.speed) * 60.0
+
+        node_path, _ = self.shortest_path(v_start, u_dest, by_travel_time=by_travel_time)
+
+        intermediate_edges: List[Tuple[int, int]] = []
+        inter_dist = 0.0
+        inter_time = 0.0
+        for i in range(len(node_path) - 1):
+            ek = (node_path[i], node_path[i + 1])
+            intermediate_edges.append(ek)
+            ed = self.edges[ek]
+            inter_dist += ed.length
+            inter_time += ed.travel_time_minutes
+
+        # Đoạn cuối trên dest_edge (từ nút u_dest đến dest_dist)
+        dest_time = (dest_dist / e_dest.speed) * 60.0
+
+        edges_path = [start_edge] + intermediate_edges + [dest_edge]
+        total_time = rem_start_time + inter_time + dest_time
+        total_dist = rem_start_dist + inter_dist + dest_dist
+
+        return {
+            "edges_path": edges_path,
+            "total_time_minutes": round(total_time, 3),
+            "total_distance_km": round(total_dist, 3),
+            "start_edge": start_edge,
+            "dest_edge": dest_edge,
+            "dest_dist": dest_dist,
         }
 
     # ========================================================================

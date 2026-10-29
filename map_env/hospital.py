@@ -30,6 +30,7 @@ class HospitalOnRoad:
     road_length: float
     distance_from_start: float
     coord: Tuple[float, float] = (0.0, 0.0)
+    handover_time: float = 4.0          # Thời gian gửi/bàn giao bệnh nhân (phút)
 
     def __post_init__(self) -> None:
         if not (0.0 < self.distance_from_start < self.road_length):
