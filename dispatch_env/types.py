@@ -35,19 +35,19 @@ SEVERITY_CONFIG: Dict[int, Tuple[float, float]] = {
 # |   3    |            4            |         120          |   0.05    |     70     |   100    |
 REWARD_CONFIG: Dict[int, Dict[str, float]] = {
     1: {
-        "wait_penalty_per_min": 1.0,
+        "wait_penalty_per_min": 0.5,
         "fail_penalty": 30.0,
         "complete_reward": 50.0,
         "perfect_reward": 70.0,
     },
     2: {
-        "wait_penalty_per_min": 2.0,
+        "wait_penalty_per_min": 1.0,
         "fail_penalty": 60.0,
         "complete_reward": 65.0,
         "perfect_reward": 80.0,
     },
     3: {
-        "wait_penalty_per_min": 4.0,
+        "wait_penalty_per_min": 1.5,
         "fail_penalty": 120.0,
         "complete_reward": 70.0,
         "perfect_reward": 100.0,

@@ -27,7 +27,7 @@ def run_experiment(
     max_time: int = 360,
     poisson_lambda: float = 0.1,
     max_pending_calls: int = 3,
-    num_ambulances: int = 4,
+    num_ambulances: int = 6,
     seed: int = 42,
     log_filename: str = "simulation.log",
 ) -> None:
@@ -129,7 +129,7 @@ if __name__ == "__main__":
                         help="Thời gian mô phỏng sinh cuộc gọi tối đa (phút, mặc định: 360)")
     parser.add_argument("--max_pending", dest="max_pending_calls", type=int, default=3,
                         help="Số lượng cuộc gọi chờ tối đa trong hàng đợi PENDING (mặc định: 3)")
-    parser.add_argument("--ambulances", dest="num_ambulances", type=int, default=4,
+    parser.add_argument("--ambulances", dest="num_ambulances", type=int, default=6,
                         help="Số lượng xe cứu thương (mặc định: 4)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Hạt giống sinh số ngẫu nhiên (mặc định: 42)")
