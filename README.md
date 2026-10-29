@@ -1,200 +1,155 @@
-# Môi Trường Mô Phỏng Điều Phối Xe Cứu Thương Khẩn Cấp Trong Thành Phố Thông Minh (MDP)
+# Môi Trường Bản Đồ Đô Thị 80 Nút Cho Điều Phối Xe Cứu Thương (Tree-like Urban Road Network)
 
-Môi trường thử nghiệm Học tăng cường (Reinforcement Learning) cho đề tài **"Ứng dụng Học tăng cường trong Điều phối Xe cứu thương Khẩn cấp trong Thành phố Thông minh"**, được thiết kế bám sát mô hình Quy trình Quyết định Markov (**MDP**) tại **Thẻ 1** của báo cáo với bộ tham số:
-
-- **Số nút giao thông ($|V|$):** `15` nút (đánh số từ `1` đến `15`)
-- **Số xe cứu thương ($K$):** `3` xe cứu thương
-- **Số cuộc gọi cấp cứu chờ đồng thời tối đa ($M$):** `3` cuộc gọi đồng thời
-- **Số tuyến đường huyết mạch ($|E_{\text{arterial}}|$):** `5` tuyến đường huyết mạch biến thiên giao thông theo thời gian thực
+Môi trường bản đồ thử nghiệm đã được nâng cấp lên quy mô **80 NÚT GIAO THÔNG** theo kiến trúc mạng lưới **dạng cây phân nhánh kết hợp mạng lưới trung tâm dày đặc (Dense Core Spider-web & Multi-branch Suburban Corridors)** và **4 BỆNH VIỆN** (2 bệnh viện gần trung tâm, 2 bệnh viện ở xa trung tâm), phục vụ cho bài toán điều phối xe cứu thương trong đô thị thông minh.
 
 ---
 
-## 1. Cấu Trúc Thư Mục
+## 1. Các Đặc Điểm Cốt Lõi Của Bản Đồ 80 Nút
+
+1. **Quy mô 80 nút giao cắt ($1 \to 80$):**
+   - Đánh số liên tục từ `1` đến `80`.
+   - Mỗi nút có tọa độ thực $(x, y)$ trên không gian đô thị rộng lớn $35\text{ km} \times 32\text{ km}$.
+   - Tượng trưng cho đầy đủ các kiểu điểm giao cắt thực tế:
+     - **Ngã 4 (Crossroads - Bậc 4):** 16 nút (Nút 1, 2, 3, 4, 5, 10, 11, 12, 13, 21, 22, 23, 41, 42, 61, 62) – các đại lộ trung tâm nội đô và đầu mối giao thông liên vùng.
+     - **Ngã 3 (T-junction - Bậc 3):** 15 nút (Nút 6, 7, 8, 9, 24, 25, 27, 43, 44, 45, 48, 63, 64, 65, 68) – các điểm phân luồng liên khu và cửa ngõ vành đai.
+     - **Đường rẽ / Nối tiếp (Turn - Bậc 2):** 14 nút (Nút 14, 15, 16, 17, 18, 19, 20, 26, 46, 47, 49, 66, 67, 69) – các đoạn rẽ/vành đai chuyển tiếp kết nối mạch lạc.
+     - **Đường cụt (Dead-end - Bậc 1):** 35 nút (Nút 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 50..60, 70..80) – các khu dân cư nội bộ, làng ngoại ô, cảng hàng hóa, khu bảo tồn sinh thái.
+
+2. **Vùng lõi trung tâm nội đô dày đặc (Dense Inner-City Core):**
+   - Khu vực trung tâm (Nút 1 đến 20) trong phạm vi $X \in [12, 24], Y \in [11, 21]$ có mật độ tuyến đường cực kỳ dày đặc.
+   - Các nút được liên kết đan xen đa tầng (Spider-web + Grid) với khoảng cách ngắn ($1.0 \to 2.5\text{ km}$), phản ánh đúng thực tế giao thông giờ cao điểm trong khu vực nội đô.
+
+3. **Tăng độ dày và hiển thị rõ hướng đi bằng mũi tên:**
+   - Các tuyến đường được vẽ với độ dày lớn (`linewidth = 3.2`), thể hiện rõ ràng 2 làn đường riêng biệt song song.
+   - Mỗi hướng đi xuất phát từ nút $u$ đến nút $v$ đều có **mũi tên to, rõ ràng** hiển thị chính xác chiều lưu thông ($u \to v$ và $v \to u$).
+   - Màu sắc mỗi mũi tên thể hiện độ tắc của riêng chiều đó:
+     - **Màu Xanh lá:** Mức 1 - Thông thoáng ($\approx 50\text{ km/h}$)
+     - **Màu Vàng cam:** Mức 2 - Đông đúc ($\approx 30\text{ km/h}$)
+     - **Màu Đỏ tươi:** Mức 3 - Ùn tắc ($\approx 15\text{ km/h}$)
+
+4. **Tăng độ đa dạng của độ dài đoạn đường:**
+   - 86 tuyến vô hướng tạo thành **172 cung đường có hướng**.
+   - Chiều dài được tính theo khoảng cách Euclid giữa tọa độ hai nút, trải dài đa dạng từ **$1.00\text{ km}$** đến **$7.00\text{ km}$** (trung bình $3.13\text{ km}$):
+     - **Đoạn ngắn nội đô ($1.00 \to 1.58\text{ km}$):** Nút 1-18 ($1.00\text{ km}$), Nút 1-19 ($1.00\text{ km}$), Nút 1-20 ($1.00\text{ km}$), Nút 4-20 ($1.00\text{ km}$), Nút 3-19 ($1.50\text{ km}$)...
+     - **Đoạn trung bình kết nối ($2.00 \to 4.00\text{ km}$):** Nút 2-10 ($2.50\text{ km}$), Nút 4-9 ($2.50\text{ km}$), Nút 1-5 ($3.00\text{ km}$), Nút 21-24 ($3.50\text{ km}$), Nút 62-65 ($3.61\text{ km}$)...
+     - **Đoạn dài trục vành đai và cao tốc ($5.00 \to 7.00\text{ km}$):** Nút 23-38 ($6.71\text{ km}$), Nút 27-32 ($7.00\text{ km}$)...
+
+5. **4 Bệnh viện (2 Gần Trung Tâm, 2 Xa Trung Tâm):**
+   - **Bệnh viện chỉ ở 1 đường duy nhất**: Mỗi bệnh viện được neo trên **DUY NHẤT 1 cung đường có hướng** ($u \to v$). Tuyệt đối **không** nằm trên chiều ngược lại ($v \to u$) và không nằm trên các nút.
+   - **Vị trí tính chính xác bằng độ dài từ điểm xuất phát (from_node):**
+     - **Bệnh viện 1 (BV Đa khoa Trung tâm Thành phố - GẦN TRUNG TÂM):**
+       - Nằm trên cung đường: **$19 \to 3$** (tổng chiều dài cung $1.50\text{ km}$)
+       - Điểm xuất phát: **Nút 19**
+       - Khoảng cách từ điểm xuất phát: **$0.80\text{ km}$** tính từ Nút 19
+       - Khoảng cách còn lại đến đích: **$0.70\text{ km}$** đến Nút 3
+       - Tọa độ địa lý: $(20.30, 16.00)\text{ km}$
+     - **Bệnh viện 2 (BV Cấp cứu Tim mạch Nội đô - GẦN TRUNG TÂM):**
+       - Nằm trên cung đường: **$4 \to 9$** (tổng chiều dài cung $2.50\text{ km}$)
+       - Điểm xuất phát: **Nút 4**
+       - Khoảng cách từ điểm xuất phát: **$1.00\text{ km}$** tính từ Nút 4
+       - Khoảng cách còn lại đến đích: **$1.50\text{ km}$** đến Nút 9
+       - Tọa độ địa lý: $(17.00, 14.00)\text{ km}$
+     - **Bệnh viện 3 (BV Đa khoa Khu vực Bắc Đô thị - XA TRUNG TÂM):**
+       - Nằm trên cung đường: **$21 \to 24$** (tổng chiều dài cung $3.50\text{ km}$)
+       - Điểm xuất phát: **Nút 21**
+       - Khoảng cách từ điểm xuất phát: **$1.80\text{ km}$** tính từ Nút 21
+       - Khoảng cách còn lại đến đích: **$1.70\text{ km}$** đến Nút 24
+       - Tọa độ địa lý: $(18.00, 25.30)\text{ km}$
+     - **Bệnh viện 4 (BV Cấp cứu Ngoại ô Tây Nam - XA TRUNG TÂM):**
+       - Nằm trên cung đường: **$62 \to 65$** (tổng chiều dài cung $3.61\text{ km}$)
+       - Điểm xuất phát: **Nút 62**
+       - Khoảng cách từ điểm xuất phát: **$1.80\text{ km}$** tính từ Nút 62
+       - Khoảng cách còn lại đến đích: **$1.81\text{ km}$** đến Nút 65
+       - Tọa độ địa lý: $(13.00, 8.00)\text{ km}$
+
+---
+
+## 2. Cấu Trúc Thư Mục Dự Án
 
 ```text
 ambulance_dispatch/
-├── environment/                # Folder chứa toàn bộ mã nguồn môi trường MDP
-│   ├── __init__.py             # Export các lớp và hằng số của môi trường
-│   ├── config.py               # Cấu hình tham số mạng lưới, hàm thưởng R(s,a), Poisson, gamma
-│   ├── city_graph.py           # Đồ thị 15 nút, 3 trạm trực, 2 bệnh viện, 5 tuyến đường huyết mạch
-│   ├── entities.py             # Thực thể Xe cứu thương (Ambulance) và Cuộc gọi cấp cứu (EmergencyRequest)
-│   └── ambulance_env.py        # Lớp môi trường chính SmartCityAmbulanceEnv (reset, step, render)
+├── map_env/                    # Package mã nguồn môi trường bản đồ
+│   ├── __init__.py             # Export MapNode, DirectedEdge, HospitalOnRoad, CityMap
+│   ├── node.py                 # Định nghĩa MapNode và phân loại kiểu giao lộ (Ngã 4, 3, Rẽ, Cụt, Phức hợp)
+│   ├── edge.py                 # Định nghĩa DirectedEdge, độ dài, biến độ tắc in {1,2,3}, cập nhật Markov
+│   ├── hospital.py             # Định nghĩa HospitalOnRoad (bệnh viện trên 1 cung đường, đo từ điểm đi)
+│   └── city_map.py             # Trình quản lý CityMap 80 nút, 172 cung có hướng, 4 bệnh viện
 ├── tests/
-│   └── test_env.py             # Bộ kiểm thử tự động (Unit Tests) cho các thành phần S, A, P, R
-├── demo_env.py                 # Script chạy minh họa từng bước và so sánh Random vs. Baseline
-├── requirements.txt            # Các thư viện Python cần thiết
-└── README.md                   # Tài liệu mô tả chi tiết về môi trường thử nghiệm
+│   └── test_map.py             # Bộ 8 unit tests kiểm tra toàn diện quy mô 80 nút và 4 bệnh viện
+├── demo_map.py                 # Script chạy demo chi tiết, in phân tích 80 nút, mũi tên 2 chiều, định tuyến 4 BV
+├── visualize_map.py            # Script trực quan hóa đồ thị và lưu ảnh city_map_80nodes.png
+├── city_map_80nodes.png        # Ảnh sơ đồ trực quan mạng lưới 80 nút (đường dày, mũi tên hướng đi, 4 BV)
+├── requirements.txt            # Danh sách thư viện cần thiết (numpy, matplotlib)
+└── README.md                   # Tài liệu hướng dẫn chi tiết
 ```
 
 ---
 
-## 2. Thiết Kế Mạng Lưới Giao Thông Đô Thị (15 Nút & 5 Tuyến Huyết Mạch)
+## 3. Phân Khái Quát 4 Vùng Mạng Lưới 80 Nút
 
-Mạng lưới đô thị được mô hình hóa dưới dạng đồ thị vô hướng có trọng số $G = (V, E)$ gồm $|V| = 15$ nút bố trí theo cấu trúc 3 phân khu (Bắc – Trung tâm – Nam) kết nối bởi các đường nội đô và **5 tuyến đường huyết mạch** chính:
+| Khu vực | Phạm vi Nút | Đặc điểm mạng lưới | Kiểu giao lộ chính | Bệnh viện trực thuộc |
+|:---|:---:|:---|:---|:---|
+| **Vùng Lõi Nội Đô (Trung tâm)** | Nút 1 đến Nút 20 | Mạng lưới mạng nhện dày đặc (Spider-web + Grid), cự ly ngắn ($1.0 \to 3.0\text{ km}$), mật độ giao cắt cao. | Ngã 4 (5 nút), Ngã 3 (4 nút), Đường rẽ/nối tiếp (7 nút), Đường cụt (4 nút) | **BV 1** ($19 \to 3$)<br>**BV 2** ($4 \to 9$) |
+| **Hành lang Phía Bắc (Ngoại ô Bắc)** | Nút 21 đến Nút 40 | Nhánh cây phân tỏa về vùng hồ và bảo tồn sinh thái Tây Bắc, Đông Bắc. Cự ly $1.5 \to 7.0\text{ km}$. | Ngã 4 (4 nút), Ngã 3 (3 nút), Đường rẽ (2 nút), Đường cụt (11 nút) | **BV 3** ($21 \to 24$) |
+| **Hành lang Phía Đông (Cảng Biển & KCN)** | Nút 41 đến Nút 60 | Nhánh cây công nghiệp hướng ra cửa biển và cụm logistics phía Đông. Cự ly $1.5 \to 5.5\text{ km}$. | Ngã 4 (2 nút), Ngã 3 (4 nút), Đường rẽ (3 nút), Đường cụt (11 nút) | Nằm giữa hành lang Đông và Trung tâm |
+| **Hành lang Phía Nam & Tây Nam** | Nút 61 đến Nút 80 | Trục cao tốc đô thị kết nối khu đô thị vệ tinh và KCN công nghệ cao Tây Nam. | Ngã 4 (2 nút), Ngã 3 (4 nút), Đường rẽ (2 nút), Đường cụt (12 nút) | **BV 4** ($62 \to 65$) |
+
+---
+
+## 4. Chi Tiết Vị Trí 4 Bệnh Viện Trên Cung Đường Có Hướng
 
 ```text
-[1:Trạm TB] ---- [2:KDC Bắc] =====(HM1)===== [3:BV ĐK BẮC] ---- [4:KĐT Bắc] ---- [5:KCNC ĐB]
-     |                | \                        || (HM2)        /   |                |
-[6:KCN Tây] ---- [7:TTTM Tây] ====(HM3)==== [8:TRẠM TRUNG TÂM] =(HM4)= [9:TTTM Đông] - [10:KDC Đông]
-     |                |   \                      || (HM5)      /     |                |
-[11:KDC TN] ---- [12:Ngã Tư Nam] ---------- [13:BV ĐK NAM] ---- [14:KDC ĐN] ---- [15:Trạm ĐN]
+[BỆNH VIỆN 1 - GẦN TRUNG TÂM]
+Nút 19 (19.5, 16.0) ======= [BV 1] ===================> Nút 3 (21.0, 16.0)
+                     0.80 km             0.70 km
+        (Chiều 19 -> 3 duy nhất! Chiều 3 -> 1 KHÔNG có bệnh viện)
+        Tọa độ BV 1: (20.30, 16.00) km | Tổng chiều dài: 1.50 km
+
+[BỆNH VIỆN 2 - GẦN TRUNG TÂM]
+Nút 4 (18.0, 14.0) ======== [BV 2] =====================> Nút 9 (15.5, 14.0)
+                     1.00 km             1.50 km
+        (Chiều 4 -> 9 duy nhất! Chiều 9 -> 4 KHÔNG có bệnh viện)
+        Tọa độ BV 2: (17.00, 14.00) km | Tổng chiều dài: 2.50 km
+
+[BỆNH VIỆN 3 - XA TRUNG TÂM (BẮC ĐÔ THỊ)]
+Nút 21 (18.0, 23.5) ======= [BV 3] ====================> Nút 24 (18.0, 27.0)
+                     1.80 km             1.70 km
+        (Chiều 21 -> 24 duy nhất! Chiều 24 -> 21 KHÔNG có bệnh viện)
+        Tọa độ BV 3: (18.00, 25.30) km | Tổng chiều dài: 3.50 km
+
+[BỆNH VIỆN 4 - XA TRUNG TÂM (TÂY NAM)]
+Nút 62 (15.5, 9.5) ======== [BV 4] =====================> Nút 65 (11.0, 6.5)
+                     1.80 km             1.81 km
+        (Chiều 62 -> 65 duy nhất! Chiều 65 -> 62 KHÔNG có bệnh viện)
+        Tọa độ BV 4: (13.00, 8.00) km  | Tổng chiều dài: 3.61 km
 ```
 
-### 2.1. Phân loại 15 nút giao thông ($V = \{1, \dots, 15\}$)
-| Nhóm nút | Các nút | Vai trò trong mô phỏng |
-| :--- | :--- | :--- |
-| **Trạm trực ($3$ trạm)** | **Nút 1**, **Nút 8**, **Nút 15** | Nơi xuất phát ban đầu của 3 xe cứu thương và là đích đến của hành động tái định vị $a_{\text{relocate}}(k, j)$ nhằm duy trì độ phủ an toàn toàn thành phố. |
-| **Bệnh viện ($2$ bệnh viện)** | **Nút 3**, **Nút 13** | Bệnh viện Đa khoa Bắc (Nút 3) và Bệnh viện Đa khoa Nam (Nút 13) – nơi xe cứu thương đưa bệnh nhân đến để hoàn tất ca cấp cứu. |
-| **Khu thương mại & dân cư** | Các nút còn lại (`2, 4, 5, 6, 7, 9, 10, 11, 12, 14`) | Có trọng số mật độ dân cư $w_v$ khác nhau (cao nhất tại các trung tâm thương mại Nút 7, 8, 9), quyết định cường độ phát sinh cuộc gọi cấp cứu $\lambda(v, t)$. |
-
-### 2.2. Danh sách 5 tuyến đường huyết mạch ($E_{\text{arterial}}$)
-Trạng thái giao thông $c_e \in \{0, 1, 2\}$ biến thiên động trên 5 trục đường chính dẫn vào trung tâm và 2 bệnh viện:
-1. **Tuyến huyết mạch 1 (`c_1`):** Cạnh `(2 <-> 3)` – Trục Khu Dân Cư Bắc $\leftrightarrow$ Bệnh Viện Đa Khoa Bắc.
-2. **Tuyến huyết mạch 2 (`c_2`):** Cạnh `(3 <-> 8)` – Đại lộ Bệnh Viện Đa Khoa Bắc $\leftrightarrow$ Trạm Trung Tâm Thành Phố.
-3. **Tuyến huyết mạch 3 (`c_3`):** Cạnh `(7 <-> 8)` – Trục Trung Tâm Thương Mại Tây $\leftrightarrow$ Trạm Trung Tâm Thành Phố.
-4. **Tuyến huyết mạch 4 (`c_4`):** Cạnh `(8 <-> 9)` – Trục Trạm Trung Tâm Thành Phố $\leftrightarrow$ Trung Tâm Thương Mại Đông.
-5. **Tuyến huyết mạch 5 (`c_5`):** Cạnh `(8 <-> 13)` – Đại lộ Trạm Trung Tâm Thành Phố $\leftrightarrow$ Bệnh Viện Đa Khoa Nam.
-
-*(Ngoài ra đồ thị có các đường nhánh vành đai `(2-8)`, `(4-8)`, `(7-13)`, `(9-13)` để Agent có thể thực hiện hành động định tuyến tránh kẹt xe $a_{\text{route}}(k, u)$ khi các tuyến huyết mạch bị ùn tắc).*
+- **Quy tắc tiếp cận bệnh viện:**
+  - Để đưa bệnh nhân đến **Bệnh viện $k$**: Xe cứu thương di chuyển qua các nút giao đến **Nút xuất phát ($u$)** của cung đường chứa bệnh viện đó, sau đó đi tiếp đúng đoạn $d_{\text{from\_start}}$ theo chiều $u \to v$ để đến cổng bệnh viện.
+  - Xe cứu thương đi theo chiều ngược lại ($v \to u$) sẽ không thể vào bệnh viện do đặc thù đường phân cách có dải phân cách cứng chống quay đầu tùy tiện.
 
 ---
 
-## 3. Mô Hình Hóa Quy Trình Quyết Định Markov $\mathcal{M} = \langle S, A, P, R, \gamma \rangle$
+## 5. Hướng Dẫn Sử Dụng & Chạy Thử Nghiệm
 
-### 3.1. Không gian Trạng thái ($S$)
-Trạng thái tại bước thời gian $t$ là vector 20 chiều thu thập toàn cảnh thông tin đô thị:
-$$S_t = [X_{\text{amb}}, X_{\text{req}}, X_{\text{traffic}}] \in \mathbb{Z}^{20}$$
-
-1. **Trạng thái đội xe cứu thương $X_{\text{amb}} = [p_1, st_1, p_2, st_2, p_3, st_3]$ ($6$ chiều):**
-   - $p_k \in \{1, \dots, 15\}$: Vị trí nút hiện tại của xe cứu thương $k \in \{1, 2, 3\}$.
-   - $st_k \in \{0, 1, 2, 3, 4\}$: Trạng thái hoạt động của xe $k$:
-     - `0` (`IDLE`): Đang rảnh / chờ lệnh tại trạm hoặc nút hiện tại.
-     - `1` (`TO_SCENE`): Đang di chuyển đi đón bệnh nhân tại hiện trường.
-     - `2` (`ON_SCENE`): Đang sơ cứu và tiếp nhận bệnh nhân tại hiện trường.
-     - `3` (`TO_HOSPITAL`): Đang vận chuyển bệnh nhân tới bệnh viện gần nhất.
-     - `4` (`RELOCATING`): Đang di chuyển tái định vị về trạm trực dự phòng.
-
-2. **Danh sách cuộc gọi cấp cứu đang chờ $X_{\text{req}} = [\text{req}_1, \text{req}_2, \text{req}_3]$ ($9$ chiều):**
-   - Mỗi slot $m \in \{1, 2, 3\}$ gồm bộ 3 giá trị $[\text{loc}_m, \text{prio}_m, \text{wait\_time}_m]$ (nếu slot trống thì bằng `[0, 0, 0]`):
-     - $\text{loc}_m \in \{1, \dots, 15\}$: Vị trí nút phát sinh cuộc gọi cấp cứu.
-     - $\text{prio}_m \in \{1, 2, 3\}$: Mức độ ưu tiên y tế:
-       - `1` (**Đỏ – Nguy kịch**): $T_{\text{golden}} = 4$ bước, $T_{\max} = 7$ bước.
-       - `2` (**Vàng – Khẩn cấp**): $T_{\text{golden}} = 6$ bước, $T_{\max} = 10$ bước.
-       - `3` (**Xanh – Tiêu chuẩn**): $T_{\text{golden}} = 8$ bước, $T_{\max} = 14$ bước.
-     - $\text{wait\_time}_m \ge 0$: Số bước thời gian bệnh nhân đã phải chờ.
-
-3. **Trạng thái giao thông $X_{\text{traffic}} = [c_1, c_2, c_3, c_4, c_5]$ ($5$ chiều):**
-   - Mức độ lưu thông của 5 tuyến đường huyết mạch:
-     - `0`: Thông thoáng (`TRAFFIC_CLEAR`)
-     - `1`: Đông (`TRAFFIC_BUSY`)
-     - `2`: Ùn tắc (`TRAFFIC_CONGESTED`)
-
-> **Phân tích số lượng trạng thái lý thuyết:**
-> Với mô hình **15 nút, 3 xe cứu thương, tối đa 3 cuộc gọi đồng thời và 5 tuyến đường huyết mạch**:
-> - Số tổ hợp của $X_{\text{amb}}$: $(15 \times 5)^3 = 75^3 = 421,875$
-> - Số tổ hợp của $X_{\text{req}}$: $(1 + 15 \times 3 \times 15)^3 = 676^3 = 308,915,776$
-> - Số tổ hợp của $X_{\text{traffic}}$: $3^5 = 243$
-> - **Tổng số trạng thái lý thuyết:** $421,875 \times 308,915,776 \times 243 \approx \mathbf{3.17 \times 10^{16}}$ trạng thái.
->
-> Để hỗ trợ đồng thời cả 4 thuật toán trong báo cáo (DP, Monte Carlo, Q-Learning và PPO), môi trường cung cấp 3 phương thức trích xuất trạng thái:
-> - `env.get_state_vector()`: Vector nguyên 20 chiều $S_t = [X_{\text{amb}}, X_{\text{req}}, X_{\text{traffic}}]$.
-> - `env.get_normalized_vector()`: Vector thực chuẩn hóa $[0, 1]$ (20 chiều) làm đầu vào cho mạng thần kinh của **PPO**.
-> - `env.get_tabular_state()`: Tuple trạng thái rời rạc rút gọn ($1,536$ trạng thái) giúp các thuật toán bảng (**Dynamic Programming**, **Monte Carlo**, **Q-Learning**) hội tụ nhanh chóng.
-
----
-
-### 3.2. Không gian Hành động ($A$)
-Tập hành động rời rạc gồm **25 hành động** (`0..24`), chia thành 4 nhóm đúng theo mục 4.2.2:
-
-| Mã hành động | Ký hiệu MDP | Ý nghĩa điều phối |
-| :--- | :--- | :--- |
-| `0 .. 8` ($3 \times 3$) | $a_{\text{dispatch}}(k, m)$ | Phân bổ xe rảnh $k \in \{0, 1, 2\}$ xuất phát phục vụ cuộc gọi cấp cứu ở slot $m \in \{0, 1, 2\}$. |
-| `9 .. 17` ($3 \times 3$) | $a_{\text{relocate}}(k, j)$ | Tái định vị xe rảnh $k \in \{0, 1, 2\}$ chuyển sang trực dự phòng tại trạm $j \in \{0, 1, 2\}$ (Nút 1, 8, 15). |
-| `18 .. 23` ($3 \times 2$) | $a_{\text{route}}(k, u)$ | Chỉ định xe đang di chuyển $k \in \{0, 1, 2\}$ chọn hướng rẽ tránh kẹt xe tại nút giao ($u=0$: nhánh có thời gian thực nhanh nhất; $u=1$: nhánh thay thế thứ 2). |
-| `24` ($1$) | $a_{\text{standby}}$ | Giữ nguyên trạng thái (chờ tại trạm hoặc để các xe tiếp tục lộ trình hiện tại). |
-
-Môi trường cung cấp hàm `env.get_action_mask()` và `env.get_valid_actions()` trả về mặt nạ các hành động hợp lệ tại mỗi bước thời gian.
-
----
-
-### 3.3. Hàm Phần thưởng Đa mục tiêu ($R(s, a)$)
-Hàm phần thưởng phản hồi trong `step(action)` tuân thủ chính xác các trọng số tại mục 4.2.3:
-
-| Sự kiện / Điều kiện | Giá trị thưởng/phạt | Ý nghĩa |
-| :--- | :---: | :--- |
-| **Tiếp cận trong Thời gian vàng ($T_{\text{resp}} \le T_{\text{golden}}$)** | **`+50`** | Thưởng cao nhất khi xe cứu thương tiếp cận bệnh nhân kịp thời trong thời gian vàng. |
-| **Chuyển viện an toàn thành công** | **`+20`** | Thưởng khi xe đưa bệnh nhân về tới bệnh viện (Nút 3 hoặc Nút 13) và hoàn thành ca cấp cứu. |
-| **Di chuyển đúng hướng tối ưu** | **`+1`** | Thưởng nhẹ mỗi bước khi xe tiến gần hơn đến hiện trường hoặc bệnh viện. |
-| **Bệnh nhân Mức 1 (Đỏ – Nguy kịch) phải chờ** | **`-5` / bước** | Phạt nặng trên mỗi bước thời gian ca nguy kịch chưa được xe tiếp cận. |
-| **Bệnh nhân Mức 2 (Vàng – Khẩn cấp) phải chờ** | **`-3` / bước** | Phạt vừa trên mỗi bước thời gian ca khẩn cấp phải chờ. |
-| **Bệnh nhân Mức 3 (Xanh – Tiêu chuẩn) phải chờ** | **`-1` / bước** | Phạt nhẹ trên mỗi bước thời gian ca tiêu chuẩn phải chờ. |
-| **Chờ quá thời gian tối đa ($T_{\text{wait}} > T_{\max}$)** | **`-100`** | Phạt cực lớn khi để bệnh nhân chờ vượt ngưỡng tối đa (nguy cơ tử vong). |
-| **Xe đi vào cung đường đang ùn tắc ($c_e = 2$)** | **`-2` / bước** | Phạt lãng phí thời gian di chuyển khi đi vào tuyến huyết mạch đang kẹt cứng. |
-| **Làm trống hoàn toàn trạm trực** | **`-5`** | Phạt khi cả 3 trạm trực đều bị bỏ trống hoàn toàn (mất độ phủ an toàn). |
-
----
-
-### 3.4. Động Học Chuyển Trạng Thái ($P(s' \mid s, a)$) & Hệ Số Chiết Khấu ($\gamma$)
-1. **Động học giao thông:**
-   - Trạng thái lưu thông của 5 tuyến đường huyết mạch chuyển đổi theo chuỗi Markov có xét chu kỳ **Giờ bình thường** và **Giờ cao điểm (Rush Hour)**.
-   - Vận tốc di chuyển thực tế trên cung đường $e$ tại bước $t$:
-     $$v(e, t) = v_{\max} \times \bigl(1 - \alpha \times \text{cong}(e, t)\bigr) + \epsilon$$
-     với $v_{\max} = 1.0$, $\alpha = 0.35$, $\text{cong}(e, t) \in \{0, 1, 2\}$ và nhiễu ngẫu nhiên $\epsilon$ tuân theo phân phối **Gaussian** hoặc **Log-Normal**.
-2. **Quy luật sinh cuộc gọi (Quá trình Poisson không đồng nhất):**
-   - Tại mỗi nút $v \in \{1, \dots, 15\}$, số cuộc gọi mới phát sinh trong khoảng thời gian $\Delta t$ tuân theo phân phối Poisson với cường độ $\lambda(v, t)$ phụ thuộc vào mật độ dân cư và giờ cao điểm:
-     $$P(k \text{ cuộc gọi mới}) = \frac{e^{-\lambda(v,t)\Delta t}\bigl(\lambda(v,t)\Delta t\bigr)^k}{k!}$$
-3. **Hệ số chiết khấu ($\gamma$):**
-   - Mặc định $\gamma = 0.95$ cho các thuật toán bảng (DP, Monte Carlo, Q-Learning) và $\gamma = 0.99$ cho thuật toán PPO (`DEFAULT_GAMMA_TABULAR`, `DEFAULT_GAMMA_PPO`).
-
----
-
-## 4. Hướng Dẫn Sử Dụng & Chạy Thử Nghiệm
-
-### 4.1. Chạy script minh họa và đánh giá Baseline
+### 5.1. Chạy Demo Bản Đồ và Biến Thiên Giao Thông
 ```bash
-python demo_env.py
+python demo_map.py
 ```
+*Script in tổng quan 80 nút, bảng các cung đường 2 chiều với mũi tên hướng đi rõ ràng, thống kê độ dài đa dạng ($1.00 \to 7.00\text{ km}$), mô phỏng 4 bước biến thiên giao thông giờ cao điểm, và tìm đường Dijkstra từ nút ngoại ô xa nhất (Nút 32) đến cả 4 bệnh viện.*
 
-### 4.2. Chạy bộ kiểm thử tự động (Unit Tests)
+### 5.2. Chạy Bộ Kiểm Thử Tự Động (Unit Tests)
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover -s tests -v
 ```
+*Tất cả 8 unit tests kiểm tra: đủ 80 nút liên tục, đủ các kiểu giao lộ, cự ly đa dạng (tỷ lệ $> 4\times$), tính độc lập và biến thiên của độ tắc đường $\{1, 2, 3\}$, và định vị chính xác 4 bệnh viện (2 gần trung tâm, 2 xa trung tâm).*
 
-### 4.3. Ví dụ tích hợp môi trường vào thuật toán RL (Q-Learning / Monte Carlo / DP / PPO)
-```python
-from environment import SmartCityAmbulanceEnv, EnvConfig
-
-# Khởi tạo môi trường (15 nút, 3 xe, tối đa 3 cuộc gọi, 5 tuyến huyết mạch)
-env = SmartCityAmbulanceEnv(config=EnvConfig(max_steps=100, gamma=0.95), seed=42)
-obs = env.reset(seed=42)
-
-done = False
-while not done:
-    # 1. Lấy trạng thái:
-    state_vec = obs["state_vector"]          # Vector MDP 20 chiều: [X_amb(6), X_req(9), X_traffic(5)]
-    norm_vec = obs["normalized_vector"]      # Vector chuẩn hóa [0,1] (20 chiều) cho PPO
-    tab_state = obs["tabular_state"]         # Tuple rời rạc thu gọn cho DP / MC / Q-Learning
-
-    # 2. Lấy danh sách hành động hợp lệ (Action Masking):
-    valid_actions = obs["valid_actions"]
-
-    # 3. Chọn hành động (ví dụ dùng Baseline hoặc Agent):
-    action = env.recommend_baseline_action()
-
-    # 4. Bước chuyển trạng thái MDP:
-    obs, reward, done, info = env.step(action)
-
-print("Thống kê kết thúc Episode:", env.get_metrics())
+### 5.3. Tạo Ảnh Sơ Đồ Trực Quan Hóa Bản Đồ
+```bash
+python visualize_map.py
 ```
-
----
-
-## 5. Kết Quả Kiểm Chứng Môi Trường (Random vs. Baseline)
-
-Kết quả chạy thử nghiệm `demo_env.py` trên **30 episodes** (mỗi episode 80 bước thời gian) cho thấy môi trường phản ánh chính xác chất lượng điều phối thông qua hàm phần thưởng và các chỉ số y tế:
-
-| Chính sách điều phối | Tổng Reward TB | Thời gian phản hồi TB | Tỷ lệ đạt Thời gian vàng | Số ca chuyển viện TB | Số ca quá hạn ($> T_{\max}$) TB |
-| :--- | ---: | ---: | ---: | ---: | ---: |
-| **Ngẫu nhiên (Random)** | `-810.57` | `6.44` bước | `60.59%` | `12.10` ca | `8.63` ca |
-| **Baseline (Xe gần nhất + Ưu tiên)** | **`+1210.23`** | **`4.10` bước** | **`83.98%`** | **`26.87` ca** | **`0.33` ca** |
-
+*Xuất ra file [`city_map_80nodes.png`](city_map_80nodes.png) kích thước siêu nét ($28 \times 24$ inch, 220 DPI) với:*
+- Đường đi vẽ dày nổi bật.
+- Mũi tên định hướng đi riêng biệt cho từng chiều.
+- Khung tô sáng vùng lõi trung tâm nội đô dày đặc.
+- Bảng chú giải trực quan 4 bệnh viện và các phân loại giao lộ.
