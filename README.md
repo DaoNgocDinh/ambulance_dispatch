@@ -24,21 +24,27 @@ Hệ thống mô phỏng điều phối xe cứu thương thông minh trên nề
 
 ### 1.2. Cuộc gọi cấp cứu (Emergency Calls)
 - **Mã cuộc gọi:** Số thứ tự tăng dần ($1, 2, 3, \dots$).
+- **Thời điểm xuất hiện:** Cuộc gọi xuất hiện vào **đầu mỗi phút**. Tại $t = 0$ có thể sinh cuộc gọi ngay từ đầu mô phỏng.
 - **Vị trí:** Nằm trên **DUY NHẤT 1 hướng đường** có hướng $u \to v$ tại khoảng cách $d$ tính từ điểm đi $u$.
 - **Mức độ nghiêm trọng:** $1, 2, 3$.
 - **Thời gian thất bại & Thời gian xử lý:**
   - Mức độ nghiêm trọng càng cao thì thời gian cần xử lý càng tăng:
-    - **Mức 1:** Thời gian thất bại = $30$ phút, Thời gian cần xử lý = $4$ phút.
+    - **Mức 1:** Thời gian thất bại = $60$ phút, Thời gian cần xử lý = $4$ phút.
     - **Mức 2:** Thời gian thất bại = $40$ phút, Thời gian cần xử lý = $6$ phút.
-    - **Mức 3:** Thời gian thất bại = $60$ phút, Thời gian cần xử lý = $8$ phút.
-  - Cuộc gọi thất bại khi tổng thời gian chờ vượt quá $T_{\text{failure}} + T_{\text{created}}$.
+    - **Mức 3:** Thời gian thất bại = $30$ phút, Thời gian cần xử lý = $8$ phút.
+  - **Quy tắc tính deadline:** Cuộc gọi thất bại khi thời gian vượt quá $T_{\text{deadline}} = T_{\text{created}} + T_{\text{failure}}$. **Xe đến đúng deadline (chuẩn thời gian thất bại, tức $t_{\text{arrival}} \le T_{\text{deadline}}$) vẫn tính là THÀNH CÔNG**.
   - **Hoàn thành hoàn hảo:** Nếu hoàn thành trước $T_{\text{created}} + 50\% \times T_{\text{failure}}$ được tính là hoàn thành hoàn hảo.
 - **Trạng thái cuộc gọi:**
-  - `Yêu cầu xử lý (PENDING)`: Chưa có xe nào nhận cuộc gọi.
+  - `Yêu cầu xử lý (PENDING)`: Chưa có xe nào nhận cuộc gọi. **Chỉ cuộc gọi đang PENDING mới được chọn để phân công**.
   - `Đợi xe cứu thương (WAITING_FOR_AMBULANCE)`: Đã có xe nhận và đang di chuyển tới.
   - `Đang xử lý (AT_SCENE)`: Xe đợi ở hiện trường để xử lý. **Tại đây loại bỏ hoàn toàn mốc thời gian thất bại**.
   - `Hoàn thành (COMPLETED)`: Khi sơ cứu xong và xe bắt đầu xuất phát đến bệnh viện.
-  - `Thất bại (FAILED)`: Bị quá hạn thời gian chờ hoặc bị từ chối do vượt quá giới hạn hàng chờ.
+  - `Thất bại (FAILED)`: Bị quá hạn thời gian chờ hoặc bị từ chối do vượt quá giới hạn hàng chờ (kèm lý do chi tiết).
+- **Quy tắc phân công (Dispatch constraints):**
+  - Xe chỉ nhận tối đa 1 cuộc gọi (xe phải đang Rảnh IDLE).
+  - Một cuộc gọi chỉ được giao tối đa cho 1 xe.
+  - Chỉ cuộc gọi đang PENDING mới được chọn tiếp nhận.
+  - Hàng chờ PENDING giới hạn tối đa 3 cuộc gọi, vượt quá sẽ bị từ chối ngay lập tức (FAILED).
 
 ---
 
@@ -94,11 +100,27 @@ Tại đầu phút $t_0$:
    - Tính toán lại tuyến đường (reroute) nếu lộ trình bị ảnh hưởng.
    - Sinh cuộc gọi mới: Poisson ($\lambda = 0.5$). Nếu $t \ge 360$, ngừng sinh cuộc gọi.
    - Kiểm tra giới hạn: **Tối đa 3 cuộc gọi trong trạng thái PENDING**. Các cuộc gọi vượt quá bị từ chối ngay lập tức (FAILED).
-7. **Tính phần thưởng $R_{t+1}$:**
-   - Phạt thời gian chờ: $-1.0 \times \text{mức độ} / \text{phút}$.
-   - Phạt cuộc gọi thất bại / từ chối: $-50.0 \times \text{mức độ}$.
-   - Thưởng cuộc gọi hoàn thành: $+100.0 \times \text{mức độ}$ (+ thưởng thêm $+50.0 \times \text{mức độ}$ nếu hoàn thành hoàn hảo).
-8. **Trả về trạng thái mới $S_{t+1}$.**
+7. **Tính phần thưởng $r_t$ tại mỗi bước thời gian $t$:**
+
+   | Mức độ | Đợi (điểm trừ/ phút) ($w_c$) | Thất bại/ Quá hạn ($p_c$) | Mỗi km đi (điểm trừ/ km) | Hoàn thành ($b_c$) | Hoàn hảo ($b_c$) |
+   | :---: | :---: | :---: | :---: | :---: | :---: |
+   | **1** | $1$ | $30$ | $0.05$ | $50$ | $70$ |
+   | **2** | $2$ | $60$ | $0.05$ | $65$ | $80$ |
+   | **3** | $4$ | $120$ | $0.05$ | $70$ | $100$ |
+
+   $$r_t = -\sum_c w_c \Delta W_{c,t} - \sum_{c \in F_t} p_c - 0.05 \sum_i \Delta d_{i,t} + \sum_{c \in C_t} b_c$$
+
+   - $\Delta W_{c,t}$: thời gian cuộc gọi $c$ thực sự chờ trong bước, tính bằng phút.
+   - $w_c$: trọng số phạt chờ theo mức độ ($1, 2, 4$).
+   - $F_t$: tập cuộc gọi vừa thất bại hoặc bị từ chối trong bước.
+   - $p_c$: mức phạt thất bại theo mức độ ($30, 60, 120$).
+   - $\Delta d_{i,t}$: quãng đường xe $i$ đi trong bước, tính bằng km.
+   - $C_t$: tập cuộc gọi vừa hoàn thành trong bước.
+   - $b_c$: điểm thưởng hoàn thành thông thường ($50, 65, 70$) hoặc hoàn hảo ($70, 80, 100$).
+8. **Điều kiện kết thúc & Ngưỡng Truncated:**
+   - **Kết thúc bình thường:** Sau mốc 360 phút (ngừng sinh cuộc gọi mới), toàn bộ cuộc gọi được xử lý xong và cả 4 xe đã quay về trạng thái Rảnh (`done = True`).
+   - **Báo Truncated:** Nếu thời gian quá giờ vượt quá **300 phút** (tức chạm mốc $360 + 300 = 660$ phút) mà vẫn còn cuộc gọi chưa hoàn tất, hệ thống lập tức dừng mô phỏng, đánh dấu `Truncated` và xuất báo cáo chi tiết toàn bộ các công việc đang tồn đọng (backlog).
+9. **Trả về trạng thái mới $S_{t+1}$.**
 
 ---
 
@@ -120,7 +142,7 @@ ambulance_dispatch/
 │   └── environment.py          # AmbulanceDispatchEnv (MDP step, Poisson, limit 3 pending, log)
 ├── tests/
 │   ├── test_map.py             # 8 unit tests kiểm tra bản đồ 80 nút
-│   └── test_dispatch_env.py    # 10 unit tests kiểm tra toàn diện môi trường điều phối
+│   └── test_dispatch_env.py    # 15 unit tests kiểm tra toàn diện môi trường điều phối
 ├── run_simulation.py           # Script chạy thử nghiệm toàn diện 360 phút và ghi file log
 ├── simulation.log              # File log chi tiết từng phút theo chuẩn format người dùng
 ├── visualize_map.py            # Script vẽ sơ đồ trực quan mạng lưới
@@ -182,11 +204,11 @@ Tùy biến tham số Poisson trực tiếp từ dòng lệnh:
 ```
 *Mô phỏng với tiến trình Poisson, 4 xe cứu thương, 4 bệnh viện, xử lý các cuộc gọi đến khi hoàn tất và ghi ra [`simulation.log`](simulation.log).*
 
-### 6.2. Chạy Toàn Bộ 18 Unit Tests Kiểm Thử
+### 6.2. Chạy Toàn Bộ 23 Unit Tests Kiểm Thử
 ```powershell
 & "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" -m unittest discover -s tests -v
 ```
-*Tất cả 18 unit tests (8 tests bản đồ + 10 tests điều phối và quy tắc nghiệp vụ) đều vượt qua thành công.*
+*Tất cả 23 unit tests (8 tests bản đồ + 15 tests điều phối và quy tắc nghiệp vụ) đều vượt qua thành công.*
 
 ### 6.3. Vẽ Bản Đồ Mạng Lưới
 ```powershell

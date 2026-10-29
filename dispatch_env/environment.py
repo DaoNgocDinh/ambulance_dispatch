@@ -12,7 +12,13 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 import numpy as np
 
 from map_env.city_map import CityMap
-from dispatch_env.types import AmbulanceStatus, CallStatus, SEVERITY_CONFIG
+from dispatch_env.types import (
+    AmbulanceStatus,
+    CallStatus,
+    SEVERITY_CONFIG,
+    REWARD_CONFIG,
+    DISTANCE_PENALTY_PER_KM,
+)
 from dispatch_env.call import EmergencyCall
 from dispatch_env.ambulance import Ambulance
 
@@ -26,6 +32,7 @@ class AmbulanceDispatchEnv:
         city_map: Optional[CityMap] = None,
         num_ambulances: int = 4,
         max_time: int = 360,
+        max_overtime: int = 300,
         poisson_lambda: float = 0.05,
         max_pending_calls: int = 3,
         seed: Optional[int] = 42,
@@ -36,12 +43,14 @@ class AmbulanceDispatchEnv:
 
         self.num_ambulances = num_ambulances
         self.max_time = max_time
+        self.max_overtime = max_overtime  # Số phút tối đa khi vượt quá thời gian mô phỏng là 300p
         self.poisson_lambda = poisson_lambda
         self.max_pending_calls = max_pending_calls
 
         # Thời gian mô phỏng (phút)
         self.current_minute: int = 0
         self.next_call_id: int = 1
+        self.is_truncated: bool = False
 
         # Danh sách xe cứu thương: id -> Ambulance
         self.ambulances: Dict[int, Ambulance] = {}
@@ -49,25 +58,42 @@ class AmbulanceDispatchEnv:
         # Danh bạ toàn bộ các cuộc gọi đã phát sinh: id -> EmergencyCall
         self.calls: Dict[int, EmergencyCall] = {}
 
-        # Danh sách cuộc gọi mới sinh ra trong phút vừa qua
+        # Danh sách cuộc gọi mới sinh ra trong phút vừa qua (đầu phút)
         self.calls_generated_this_step: List[EmergencyCall] = []
 
         # Danh sách các cuộc gọi bị thất bại CHỈ trong phút này (để ghi log 1 lần duy nhất)
         self.calls_failed_this_step: List[EmergencyCall] = []
 
+        # Danh sách các cuộc gọi vừa hoàn thành trong bước này (C_t)
+        self.calls_completed_this_step: List[EmergencyCall] = []
+
         # Thống kê tổng kết
         self.served_calls_count: int = 0
         self.failed_calls_count: int = 0
         self.perfect_calls_count: int = 0
+        self.last_step_reward: float = 0.0
+        self.total_reward: float = 0.0
+        self.last_reward_breakdown: Dict[str, float] = {
+            "wait_penalty": 0.0,
+            "failure_penalty": 0.0,
+            "distance_penalty": 0.0,
+            "completion_bonus": 0.0,
+            "total": 0.0,
+        }
 
         self.reset(seed=seed)
 
-    def reset(self, seed: Optional[int] = None) -> Dict[str, Any]:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        generate_initial_calls: bool = True,
+    ) -> Dict[str, Any]:
         """
         Khởi tạo lại môi trường:
         - 4 xe cứu thương ở các vị trí ban đầu ngẫu nhiên trên mạng lưới.
         - Trạng thái ban đầu các xe luôn RẢNH (IDLE).
         - Thời gian mô phỏng bắt đầu từ 0 phút.
+        - Tại t=0: Có thể sinh cuộc gọi mới theo Poisson xuất hiện vào đầu phút.
         """
         if seed is not None:
             self.seed = seed
@@ -79,9 +105,20 @@ class AmbulanceDispatchEnv:
         self.calls.clear()
         self.calls_generated_this_step.clear()
         self.calls_failed_this_step.clear()
+        self.calls_completed_this_step.clear()
         self.served_calls_count = 0
         self.failed_calls_count = 0
         self.perfect_calls_count = 0
+        self.last_step_reward = 0.0
+        self.total_reward = 0.0
+        self.last_reward_breakdown = {
+            "wait_penalty": 0.0,
+            "failure_penalty": 0.0,
+            "distance_penalty": 0.0,
+            "completion_bonus": 0.0,
+            "total": 0.0,
+        }
+        self.is_truncated = False
 
         # Khởi tạo 4 xe cứu thương tại vị trí ngẫu nhiên trên các cung đường
         all_edges = list(self.city_map.edges.keys())
@@ -104,6 +141,10 @@ class AmbulanceDispatchEnv:
                 route_edges=[edge_key],
             )
 
+        # Tại t = 0: Cuộc gọi có thể sinh ra vào đầu phút
+        if generate_initial_calls:
+            self.calls_generated_this_step = self._generate_new_calls()
+
         return self.get_observation()
 
     @property
@@ -122,10 +163,18 @@ class AmbulanceDispatchEnv:
     def get_valid_actions(self) -> List[Tuple[int, int]]:
         """
         Xác định danh sách các hành động phân công hợp lệ:
-        A = (Xe cứu thương rảnh, Cuộc gọi đang yêu cầu xử lý).
+        A = (Xe cứu thương rảnh, Cuộc gọi đang PENDING).
+        - Xe chỉ nhận tối đa 1 cuộc gọi (chỉ các xe đang Rảnh IDLE và current_call_id is None).
+        - Chỉ cuộc gọi đang PENDING mới được chọn.
         """
-        idle_ambs = [a.ambulance_id for a in self.ambulances.values() if a.status == AmbulanceStatus.IDLE]
-        pending_call_ids = [c.call_id for c in self.pending_calls]
+        idle_ambs = [
+            a.ambulance_id for a in self.ambulances.values()
+            if a.status == AmbulanceStatus.IDLE and a.current_call_id is None
+        ]
+        pending_call_ids = [
+            c.call_id for c in self.calls.values()
+            if c.status == CallStatus.PENDING
+        ]
 
         valid_actions: List[Tuple[int, int]] = []
         for aid in idle_ambs:
@@ -220,6 +269,7 @@ class AmbulanceDispatchEnv:
             if len(current_pending) >= self.max_pending_calls:
                 # Bị từ chối ngay lập tức -> Thất bại
                 call.mark_rejected()
+                call.failure_penalized = True
                 self.failed_calls_count += 1
                 self.calls_failed_this_step.append(call)
             else:
@@ -235,7 +285,7 @@ class AmbulanceDispatchEnv:
         action: Optional[Union[Tuple[int, int], List[Tuple[int, int]]]] = None,
         auto_dispatch: bool = False,
     ) -> Tuple[Dict[str, Any], float, bool, Dict[str, Any]]:
-        """
+        r"""
         Thực hiện một bước mô phỏng 1 phút: [t, t+1).
         
         Quy trình chuẩn theo yêu cầu:
@@ -246,19 +296,20 @@ class AmbulanceDispatchEnv:
         5. Trong khoảng [t, t+1):
            - Các xe di chuyển theo tuyến hiện tại (di chuyển liên tục sub-minute).
            - Xử lý sự kiện đến hiện trường, chăm sóc sơ cứu, đến BV và bàn giao.
-           - Cập nhật thời gian chờ và kiểm tra mốc thời gian thất bại.
+           - Cập nhật thời gian chờ thực sự \Delta W_{c,t} và kiểm tra mốc thời gian thất bại.
            - Nếu cuộc gọi thất bại trong khi xe đang tiếp cận, xe lập tức về rảnh!
         6. Tại t+1:
            - Cập nhật trạng thái giao thông.
            - Tính toán lại tuyến đường (reroute) nếu có thay đổi.
            - Sinh cuộc gọi mới (Poisson).
            - Kiểm tra giới hạn 3 cuộc gọi PENDING.
-        7. Tính phần thưởng R_{t+1}.
+        7. Tính phần thưởng r_t theo công thức:
+           r_t = - \sum_c w_c \Delta W_{c,t} - \sum_{c \in F_t} p_c - 0.05 \sum_i \Delta d_{i,t} + \sum_{c \in C_t} b_c
         8. Trả về trạng thái mới S_{t+1}.
         """
         t0 = float(self.current_minute)
-        step_reward = 0.0
         self.calls_failed_this_step.clear()
+        self.calls_completed_this_step.clear()
 
         # --------------------------------------------------------------------
         # 3 & 4. XỬ LÝ HÀNH ĐỘNG PHÂN CÔNG (DISPATCH ACTIONS)
@@ -299,16 +350,38 @@ class AmbulanceDispatchEnv:
                     dispatch_pairs.append((best_amb.ambulance_id, c.call_id))
                     idle_ambs.remove(best_amb)
 
-        # Áp dụng các phân công hợp lệ
+        # Áp dụng các phân công hợp lệ:
+        # - Xe chỉ nhận tối đa 1 cuộc gọi (chỉ các xe đang Rảnh IDLE và chưa có nhiệm vụ)
+        # - Một cuộc gọi được giao tối đa cho 1 xe
+        # - Chỉ cuộc gọi đang PENDING mới được chọn tiếp nhận
+        assigned_amb_ids: set[int] = set()
+        assigned_call_ids: set[int] = set()
+
         for aid, cid in dispatch_pairs:
+            if aid in assigned_amb_ids or cid in assigned_call_ids:
+                continue
             amb = self.ambulances.get(aid)
             call = self.calls.get(cid)
-            if amb and call and amb.status == AmbulanceStatus.IDLE and call.status == CallStatus.PENDING:
+            if (
+                amb is not None
+                and call is not None
+                and amb.status == AmbulanceStatus.IDLE
+                and amb.current_call_id is None
+                and call.status == CallStatus.PENDING
+            ):
                 amb.dispatch_to_call(call, self.city_map)
+                assigned_amb_ids.add(aid)
+                assigned_call_ids.add(cid)
 
         # --------------------------------------------------------------------
         # 5. TRONG KHOẢNG [t, t+1): CÁC XE DI CHUYỂN LIÊN TỤC & XỬ LÝ SỰ KIỆN
         # --------------------------------------------------------------------
+        # Ghi nhận các cuộc gọi đang chờ ở đầu bước t0 (để tính \Delta W_{c,t} chính xác)
+        waiting_calls_at_t0: List[EmergencyCall] = [
+            c for c in self.calls.values()
+            if c.status in (CallStatus.PENDING, CallStatus.WAITING_FOR_AMBULANCE)
+        ]
+
         for amb in self.ambulances.values():
             amb.step_continuous(
                 dt_minute=1.0,
@@ -317,18 +390,31 @@ class AmbulanceDispatchEnv:
                 calls_dict=self.calls,
             )
 
-        # Cập nhật thời gian chờ và kiểm tra mốc thất bại
-        for call in list(self.calls.values()):
-            if call.status in (CallStatus.PENDING, CallStatus.WAITING_FOR_AMBULANCE):
-                call.update_wait_time(1.0)
-                # Phạt thời gian chờ tỷ lệ với mức độ nghiêm trọng
-                step_reward -= 1.0 * call.severity
+        # Cập nhật thời gian thực sự chờ \Delta W_{c,t} trong bước và kiểm tra mốc thất bại
+        wait_penalty = 0.0
+        for call in waiting_calls_at_t0:
+            w_c = REWARD_CONFIG[call.severity]["wait_penalty_per_min"]
+            if (
+                call.arrived_at_scene_time is not None
+                and call.status in (CallStatus.AT_SCENE, CallStatus.COMPLETED)
+            ):
+                # Xe đã đến hiện trường giữa phút trong khoảng [t0, t0 + 1]:
+                # Thời gian thực sự chờ trong bước là \Delta W_{c,t} = t_arrival - t0
+                delta_w = max(0.0, min(1.0, call.arrived_at_scene_time - t0))
+                call.wait_time += delta_w
+                wait_penalty += w_c * delta_w
+            else:
+                # Xe chưa đến hiện trường trong khoảng [t0, t0 + 1): chờ trọn 1.0 phút
+                delta_w = 1.0
+                call.update_wait_time(delta_w)
+                wait_penalty += w_c * delta_w
 
-                if call.check_failure(current_time=t0 + 1.0):
+                if call.status == CallStatus.FAILED or call.check_failure(current_time=t0 + 1.0):
                     # Cuộc gọi bị thất bại do quá hạn
-                    self.failed_calls_count += 1
-                    self.calls_failed_this_step.append(call)
-                    step_reward -= 50.0 * call.severity
+                    if not call.failure_penalized:
+                        call.failure_penalized = True
+                        self.failed_calls_count += 1
+                        self.calls_failed_this_step.append(call)
 
                     # "Khi cuộc gọi bị xoá mà trong lúc đó có xe đang tiếp cận thì xe sẽ lập tức về trạng thái rảnh"
                     if call.assigned_ambulance_id is not None:
@@ -336,16 +422,19 @@ class AmbulanceDispatchEnv:
                         if assigned_amb and assigned_amb.status == AmbulanceStatus.EN_ROUTE_TO_CALL:
                             assigned_amb.abort_mission_to_idle()
 
-        # Kiểm tra phần thưởng cho các cuộc gọi vừa hoàn thành
+        # Kiểm tra phần thưởng b_c cho các cuộc gọi vừa hoàn thành trong bước (C_t)
+        completion_bonus = 0.0
         for call in self.calls.values():
-            if call.status == CallStatus.COMPLETED and call.completed_time is not None:
-                if t0 <= call.completed_time < t0 + 1.0:
-                    self.served_calls_count += 1
-                    reward_add = 100.0 * call.severity
-                    if call.is_perfect:
-                        self.perfect_calls_count += 1
-                        reward_add += 50.0 * call.severity  # Thưởng thêm hoàn thành hoàn hảo
-                    step_reward += reward_add
+            if call.status == CallStatus.COMPLETED and not call.completion_rewarded:
+                call.completion_rewarded = True
+                self.calls_completed_this_step.append(call)
+                self.served_calls_count += 1
+                if call.is_perfect:
+                    self.perfect_calls_count += 1
+                    b_c = REWARD_CONFIG[call.severity]["perfect_reward"]
+                else:
+                    b_c = REWARD_CONFIG[call.severity]["complete_reward"]
+                completion_bonus += b_c
 
         # --------------------------------------------------------------------
         # 6. TẠI t+1: CẬP NHẬT GIAO THÔNG, REROUTE, SINH CUỘC GỌI MỚI
@@ -359,21 +448,48 @@ class AmbulanceDispatchEnv:
         for amb in self.ambulances.values():
             amb.reroute_if_beneficial(self.city_map)
 
-        # Sinh cuộc gọi mới tại đầu phút t+1
+        # Sinh cuộc gọi mới tại đầu phút t+1 (các cuộc gọi bị từ chối cũng thuộc F_t)
         new_calls = self._generate_new_calls()
         self.calls_generated_this_step = new_calls
 
         # --------------------------------------------------------------------
-        # 7 & 8. KIỂM TRA ĐIỀU KIỆN KẾT THÚC & TRẢ VỀ
+        # 7. TÍNH PHẦN THƯỞNG r_t THEO CÔNG THỨC CHUẨN:
+        # r_t = - \sum_c w_c \Delta W_{c,t} - \sum_{c \in F_t} p_c - 0.05 \sum_i \Delta d_{i,t} + \sum_{c \in C_t} b_c
         # --------------------------------------------------------------------
-        # Mô phỏng kết thúc khi đã vượt qua max_time (360 phút)
-        # VÀ không còn cuộc gọi nào đang hoạt động (tất cả xe đã hoàn thành nhiệm vụ)
+        failure_penalty = sum(
+            REWARD_CONFIG[c.severity]["fail_penalty"]
+            for c in self.calls_failed_this_step
+        )
+        step_distance = sum(amb.last_step_distance for amb in self.ambulances.values())
+        distance_penalty = DISTANCE_PENALTY_PER_KM * step_distance
+
+        step_reward = -wait_penalty - failure_penalty - distance_penalty + completion_bonus
+        self.last_step_reward = step_reward
+        self.total_reward += step_reward
+        self.last_reward_breakdown = {
+            "wait_penalty": wait_penalty,
+            "failure_penalty": failure_penalty,
+            "distance_penalty": distance_penalty,
+            "completion_bonus": completion_bonus,
+            "total": step_reward,
+        }
+
+        # --------------------------------------------------------------------
+        # 8. KIỂM TRA ĐIỀU KIỆN KẾT THÚC & TRẢ VỀ
+        # --------------------------------------------------------------------
+        # Mô phỏng kết thúc bình thường khi đã vượt qua max_time (360 phút)
+        # VÀ không còn cuộc gọi nào đang hoạt động, tất cả xe đã trở về Rảnh (hoàn tất giao bệnh nhân)
         done = False
         if self.current_minute >= self.max_time:
             active_count = len(self.active_calls)
             all_ambs_idle = all(a.status == AmbulanceStatus.IDLE for a in self.ambulances.values())
-            if active_count == 0 or all_ambs_idle:
+            if active_count == 0 and all_ambs_idle:
                 done = True
+
+        # Kiểm tra ngưỡng vượt quá thời gian mô phỏng (300 phút quá giờ) -> Dừng và báo TRUNCATED
+        if not done and self.current_minute >= (self.max_time + self.max_overtime):
+            done = True
+            self.is_truncated = True
 
         info = {
             "minute": self.current_minute,
@@ -381,6 +497,11 @@ class AmbulanceDispatchEnv:
             "served": self.served_calls_count,
             "failed": self.failed_calls_count,
             "perfect": self.perfect_calls_count,
+            "step_reward": step_reward,
+            "total_reward": self.total_reward,
+            "reward_breakdown": dict(self.last_reward_breakdown),
+            "truncated": self.is_truncated,
+            "backlog": self.get_backlog() if self.is_truncated else None,
         }
 
         return self.get_observation(), step_reward, done, info
@@ -472,6 +593,13 @@ class AmbulanceDispatchEnv:
         lines.append("—--------------------------------------------")
         lines.append(f"Số cuộc gọi thành công: {self.served_calls_count}")
         lines.append(f"Số cuộc gọi thất bại: {self.failed_calls_count}")
+        rb = self.last_reward_breakdown
+        lines.append(
+            f"Reward bước này (r_t): {self.last_step_reward:.2f} "
+            f"(Phạt chờ: -{rb['wait_penalty']:.2f}, Phạt thất bại: -{rb['failure_penalty']:.2f}, "
+            f"Phạt quãng đường: -{rb['distance_penalty']:.2f}, Thưởng hoàn thành: +{rb['completion_bonus']:.2f})"
+        )
+        lines.append(f"Tổng Reward tích lũy: {self.total_reward:.2f}")
         if self.calls_failed_this_step:
             lines.append("Lý do cuộc gọi thất bại trong phút này:")
             for fc in self.calls_failed_this_step:
@@ -485,4 +613,80 @@ class AmbulanceDispatchEnv:
         for aid in rerouted_ambs:
             lines.append(f"Xe {aid} đã tính toán lại đoạn đường")
 
+        # Nếu mô phỏng bị dừng (TRUNCATED), thông báo lý do và liệt kê chi tiết công việc tồn đọng
+        if self.is_truncated:
+            lines.append("")
+            lines.append(self.format_backlog_report())
+
+        return "\n".join(lines)
+
+    def get_backlog(self) -> Dict[str, Any]:
+        """
+        Thống kê các công việc đang bị tồn đọng (backlog) khi chạm ngưỡng thời gian tối đa:
+        - Các cuộc gọi đang PENDING (chưa có xe nhận).
+        - Các cuộc gọi đang WAITING_FOR_AMBULANCE (đang chờ xe đến).
+        - Các cuộc gọi đang AT_SCENE (đang sơ cứu tại hiện trường).
+        - Các xe đang EN_ROUTE_TO_HOSPITAL (đang chở bệnh nhân đi cấp cứu).
+        - Các xe đang AT_HOSPITAL (đang bàn giao bệnh nhân tại bệnh viện).
+        """
+        pending = [c for c in self.calls.values() if c.status == CallStatus.PENDING]
+        waiting = [c for c in self.calls.values() if c.status == CallStatus.WAITING_FOR_AMBULANCE]
+        at_scene = [c for c in self.calls.values() if c.status == CallStatus.AT_SCENE]
+        en_route_hosp = [a for a in self.ambulances.values() if a.status == AmbulanceStatus.EN_ROUTE_TO_HOSPITAL]
+        at_hosp = [a for a in self.ambulances.values() if a.status == AmbulanceStatus.AT_HOSPITAL]
+
+        return {
+            "pending_calls": pending,
+            "waiting_calls": waiting,
+            "at_scene_calls": at_scene,
+            "en_route_hospital_ambulances": en_route_hosp,
+            "at_hospital_ambulances": at_hosp,
+            "total_backlog_count": len(pending) + len(waiting) + len(at_scene) + len(en_route_hosp) + len(at_hosp),
+        }
+
+    def format_backlog_report(self) -> str:
+        """
+        Định dạng thông báo báo cáo chi tiết các công việc bị tồn đọng khi chạm ngưỡng Truncated (vượt quá 300 phút).
+        """
+        backlog = self.get_backlog()
+        lines: List[str] = []
+        lines.append("==================================================")
+        lines.append("THÔNG BÁO: MÔ PHỎNG BỊ DỪNG (TRUNCATED) DO CHẠM NGƯỠNG 300 PHÚT QUÁ GIỜ!")
+        lines.append(f"Thời gian hiện tại: {self.current_minute} phút (Giới hạn: {self.max_time}p + {self.max_overtime}p quá giờ)")
+        lines.append(f"Tổng số công việc còn tồn đọng: {backlog['total_backlog_count']}")
+        lines.append("--------------------------------------------------")
+        lines.append("DANH SÁCH CÁC CÔNG VIỆC TỒN ĐỌNG CHI TIẾT:")
+
+        # 1. Cuộc gọi PENDING
+        lines.append(f"1. Cuộc gọi yêu cầu xử lý chưa có xe nhận (PENDING): {len(backlog['pending_calls'])} cuộc gọi")
+        for c in backlog["pending_calls"]:
+            lines.append(
+                f"   • Cuộc gọi #{c.call_id} (Mức {c.severity}) tại N{c.edge[0]}->N{c.edge[1]} (+{c.distance_from_start:.2f}km), "
+                f"đã chờ: {c.wait_time:.1f}p / Hạn chót: {c.deadline:.1f}p"
+            )
+
+        # 2. Cuộc gọi WAITING_FOR_AMBULANCE
+        lines.append(f"2. Cuộc gọi đang đợi xe cứu thương tới (WAITING_FOR_AMBULANCE): {len(backlog['waiting_calls'])} cuộc gọi")
+        for c in backlog["waiting_calls"]:
+            lines.append(
+                f"   • Cuộc gọi #{c.call_id} (Mức {c.severity}) giao cho Xe {c.assigned_ambulance_id}, "
+                f"đã chờ: {c.wait_time:.1f}p / Hạn chót: {c.deadline:.1f}p"
+            )
+
+        # 3. Cuộc gọi AT_SCENE
+        lines.append(f"3. Cuộc gọi đang được sơ cứu tại hiện trường (AT_SCENE): {len(backlog['at_scene_calls'])} cuộc gọi")
+        for c in backlog["at_scene_calls"]:
+            lines.append(f"   • Cuộc gọi #{c.call_id} (Mức {c.severity}), Xe {c.assigned_ambulance_id} đang xử lý tại chỗ")
+
+        # 4. Xe đang đưa bệnh nhân đến bệnh viện
+        lines.append(f"4. Xe cứu thương đang đưa bệnh nhân tới bệnh viện (EN_ROUTE_TO_HOSPITAL): {len(backlog['en_route_hospital_ambulances'])} xe")
+        for a in backlog["en_route_hospital_ambulances"]:
+            lines.append(f"   • Xe {a.ambulance_id} đang chở bệnh nhân cuộc gọi #{a.current_call_id} tới {a.target_name}")
+
+        # 5. Xe đang bàn giao tại bệnh viện
+        lines.append(f"5. Xe cứu thương đang bàn giao tại bệnh viện (AT_HOSPITAL): {len(backlog['at_hospital_ambulances'])} xe")
+        for a in backlog["at_hospital_ambulances"]:
+            lines.append(f"   • Xe {a.ambulance_id} đang bàn giao bệnh nhân cuộc gọi #{a.current_call_id} tại {a.target_name}")
+
+        lines.append("==================================================")
         return "\n".join(lines)

@@ -45,6 +45,8 @@ class EmergencyCall:
     is_perfect: bool = False
     failure_type: Optional[str] = None
     failure_reason: Optional[str] = None
+    completion_rewarded: bool = False
+    failure_penalized: bool = False
 
     def __post_init__(self) -> None:
         if self.severity in SEVERITY_CONFIG:
@@ -73,7 +75,9 @@ class EmergencyCall:
         Lưu ý: Khi đã ở trạng thái 'Đang xử lý' (AT_SCENE), mốc thời gian thất bại bị loại bỏ.
         """
         if self.status in (CallStatus.PENDING, CallStatus.WAITING_FOR_AMBULANCE):
-            if current_time >= self.deadline:
+            # Xe đến đúng deadline (current_time == deadline) tính là thành công
+            # Chỉ thất bại khi thời gian đã vượt quá deadline (current_time > deadline + 1e-6)
+            if current_time > self.deadline + 1e-6:
                 self.status = CallStatus.FAILED
                 self.failure_type = "timeout"
                 if self.assigned_ambulance_id is not None:

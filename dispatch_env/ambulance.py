@@ -52,6 +52,7 @@ class Ambulance:
     hospital_time_remaining: float = 0.0
     assigned_hospital_id: Optional[int] = None
     total_distance_traveled: float = 0.0
+    last_step_distance: float = 0.0
     reroute_count: int = 0
     last_rerouted_this_step: bool = False
 
@@ -208,6 +209,7 @@ class Ambulance:
           + Nếu đến vị trí bệnh nhân hoặc bệnh viện giữa phút, xử lý sự kiện tương ứng.
         """
         time_budget = dt_minute
+        start_total_dist = self.total_distance_traveled
 
         while time_budget > 1e-6:
             # 1. Trạng thái rảnh (IDLE)
@@ -232,21 +234,49 @@ class Ambulance:
 
                     if rem_dist <= 1e-6:
                         # Đã tới hiện trường!
-                        self.distance_from_start = target_dist
-                        self.status = AmbulanceStatus.AT_SCENE
-                        call.mark_at_scene(arrival_time=current_minute + (dt_minute - time_budget))
-                        self.scene_time_remaining = call.processing_time
-                        continue
+                        arrival_time = current_minute + (dt_minute - time_budget)
+                        if arrival_time <= call.deadline + 1e-6:
+                            # Đến đúng hoặc trước deadline: tính là THÀNH CÔNG
+                            self.distance_from_start = target_dist
+                            self.status = AmbulanceStatus.AT_SCENE
+                            call.mark_at_scene(arrival_time=arrival_time)
+                            self.scene_time_remaining = call.processing_time
+                            continue
+                        else:
+                            # Đến trễ sau deadline
+                            call.status = CallStatus.FAILED
+                            call.failure_type = "timeout"
+                            call.failure_reason = (
+                                f"Quá hạn thời gian chờ cấp cứu (đã chờ {call.wait_time:.1f}/{call.failure_time:.0f} phút) "
+                                f"trước khi Xe {self.ambulance_id} kịp tiếp cận hiện trường"
+                            )
+                            self.abort_mission_to_idle()
+                            break
 
                     time_to_reach = rem_dist / max(v_min, 1e-4)
                     if time_budget >= time_to_reach:
-                        self.distance_from_start = target_dist
-                        self.total_distance_traveled += rem_dist
-                        time_budget -= time_to_reach
-                        self.status = AmbulanceStatus.AT_SCENE
-                        call.mark_at_scene(arrival_time=current_minute + (dt_minute - time_budget))
-                        self.scene_time_remaining = call.processing_time
-                        continue
+                        arrival_time = current_minute + (dt_minute - time_budget + time_to_reach)
+                        if arrival_time <= call.deadline + 1e-6:
+                            # Đến đúng hoặc trước deadline: tính là THÀNH CÔNG
+                            self.distance_from_start = target_dist
+                            self.total_distance_traveled += rem_dist
+                            time_budget -= time_to_reach
+                            self.status = AmbulanceStatus.AT_SCENE
+                            call.mark_at_scene(arrival_time=arrival_time)
+                            self.scene_time_remaining = call.processing_time
+                            continue
+                        else:
+                            # Đến trễ sau deadline
+                            self.distance_from_start = target_dist
+                            self.total_distance_traveled += rem_dist
+                            call.status = CallStatus.FAILED
+                            call.failure_type = "timeout"
+                            call.failure_reason = (
+                                f"Quá hạn thời gian chờ cấp cứu (đã chờ {call.wait_time:.1f}/{call.failure_time:.0f} phút) "
+                                f"trước khi Xe {self.ambulance_id} kịp tiếp cận hiện trường"
+                            )
+                            self.abort_mission_to_idle()
+                            break
                     else:
                         moved = time_budget * v_min
                         self.distance_from_start += moved
@@ -355,3 +385,5 @@ class Ambulance:
                     self.hospital_time_remaining -= time_budget
                     time_budget = 0.0
                     break
+
+        self.last_step_distance = self.total_distance_traveled - start_total_dist

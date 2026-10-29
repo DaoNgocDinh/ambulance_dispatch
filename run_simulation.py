@@ -27,7 +27,7 @@ def run_experiment(
     max_time: int = 360,
     poisson_lambda: float = 0.1,
     max_pending_calls: int = 3,
-    num_ambulances: int = 6,
+    num_ambulances: int = 4,
     seed: int = 42,
     log_filename: str = "simulation.log",
 ) -> None:
@@ -39,6 +39,7 @@ def run_experiment(
     print(f"- Giới hạn tối đa cuộc gọi chờ (PENDING)   : {max_pending_calls} cuộc gọi (quá {max_pending_calls} bị từ chối/thất bại)")
     print(f"- Số lượng xe cứu thương                  : {num_ambulances} xe (Trạng thái ban đầu: Rảnh)")
     print(f"- Số lượng bệnh viện                      : 4 BV (2 gần trung tâm, 2 xa trung tâm)")
+    print(f"- Giới hạn thời gian quá giờ tối đa        : 300 phút (chạm ngưỡng sẽ báo Truncated và dừng)")
     print(f"- Hạt giống ngẫu nhiên (seed)             : {seed}")
     print(f"- File log ghi lại diễn biến              : {log_filename}")
     print("=" * 85)
@@ -48,14 +49,17 @@ def run_experiment(
         city_map=city_map,
         num_ambulances=num_ambulances,
         max_time=max_time,
+        max_overtime=300,
         poisson_lambda=poisson_lambda,
         max_pending_calls=max_pending_calls,
         seed=seed,
     )
 
     log_entries: List[str] = []
-    start_real_time = time.time()
+    # Ghi nhận trạng thái khởi đầu tại Phút thứ 0 (cuộc gọi có thể sinh ra tại t=0)
+    log_entries.append(env.format_log_step())
 
+    start_real_time = time.time()
     done = False
     step_count = 0
 
@@ -73,17 +77,14 @@ def run_experiment(
             perfect = env.perfect_calls_count
             pending = len(env.pending_calls)
             active = len(env.active_calls)
+            status_tag = " [TRUNCATED]" if env.is_truncated else ""
             print(
                 f"[+] Phút {curr_m:>3}/{max_time} | "
                 f"Đang chờ: {pending} | Đang xử lý: {active} | "
                 f"Thành công: {served:>3} (Hoàn hảo: {perfect:>3}) | "
-                f"Thất bại: {failed:>3}"
+                f"Thất bại: {failed:>3} | "
+                f"Reward: {env.total_reward:>8.2f}{status_tag}"
             )
-
-        # Biện pháp an toàn tránh vòng lặp vô hạn (tối đa max_time + 120 phút để dọn sạch các cuộc gọi còn lại)
-        if env.current_minute > max_time + 120:
-            print("[!] Cảnh báo: Đã vượt quá thời gian gia hạn xử lý sau 360 phút.")
-            break
 
     elapsed_time = time.time() - start_real_time
 
@@ -95,7 +96,10 @@ def run_experiment(
     print("\n" + "=" * 85)
     print("                        KẾT QUẢ TỔNG KẾT MÔ PHỎNG")
     print("=" * 85)
+    if env.is_truncated:
+        print("\n" + env.format_backlog_report() + "\n")
     print(f"- Tổng thời gian mô phỏng hoàn tất : {env.current_minute} phút")
+    print(f"- Trạng thái kết thúc              : {'Bị dừng (TRUNCATED - quá 300p quá giờ)' if env.is_truncated else 'Hoàn thành tất cả cuộc gọi (COMPLETED)'}")
     print(f"- Thời gian chạy thực tế           : {elapsed_time:.2f} giây")
     print(f"- Tổng số cuộc gọi đã phát sinh    : {len(env.calls)}")
     print(f"- Tổng số cuộc gọi THÀNH CÔNG      : {env.served_calls_count} "
@@ -103,6 +107,7 @@ def run_experiment(
     print(f"  + Trong đó HOÀN HẢO (trước 50%)  : {env.perfect_calls_count}")
     print(f"- Tổng số cuộc gọi THẤT BẠI        : {env.failed_calls_count} "
           f"({env.failed_calls_count / max(1, len(env.calls)) * 100:.1f}%)")
+    print(f"- Tổng điểm thưởng tích lũy (R)    : {env.total_reward:.2f}")
 
     # Thống kê từng xe
     print("\n- Thống kê hoạt động của 4 xe cứu thương:")
@@ -124,7 +129,7 @@ if __name__ == "__main__":
                         help="Thời gian mô phỏng sinh cuộc gọi tối đa (phút, mặc định: 360)")
     parser.add_argument("--max_pending", dest="max_pending_calls", type=int, default=3,
                         help="Số lượng cuộc gọi chờ tối đa trong hàng đợi PENDING (mặc định: 3)")
-    parser.add_argument("--ambulances", dest="num_ambulances", type=int, default=6,
+    parser.add_argument("--ambulances", dest="num_ambulances", type=int, default=4,
                         help="Số lượng xe cứu thương (mặc định: 4)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Hạt giống sinh số ngẫu nhiên (mặc định: 42)")
