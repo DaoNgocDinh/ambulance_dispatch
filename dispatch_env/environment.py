@@ -7,14 +7,21 @@ và ghi log chi tiết theo định dạng yêu cầu.
 
 from __future__ import annotations
 
+import itertools
 import math
-from typing import Dict, List, Tuple, Optional, Any, Union
+from typing import Dict, List, Tuple, Optional, Any, Union, Sequence, Set
 import numpy as np
 
 from map_env.city_map import CityMap
 from dispatch_env.types import (
     AmbulanceStatus,
     CallStatus,
+    DEFAULT_NUM_AMBULANCES,
+    DEFAULT_MAX_TIME,
+    DEFAULT_MAX_OVERTIME,
+    DEFAULT_POISSON_LAMBDA,
+    DEFAULT_MAX_PENDING_CALLS,
+    DEFAULT_SEED,
     SEVERITY_CONFIG,
     REWARD_CONFIG,
     DISTANCE_PENALTY_PER_KM,
@@ -26,16 +33,23 @@ from dispatch_env.ambulance import Ambulance
 class AmbulanceDispatchEnv:
     """
     Môi trường Điều phối Xe Cứu thương trên mạng lưới 80 nút và 4 bệnh viện.
+    Các tham số mặc định đồng bộ hoàn toàn với run_simulation.py:
+    - num_ambulances = 6
+    - max_time = 360
+    - max_overtime = 300
+    - poisson_lambda = 0.1
+    - max_pending_calls = 3
+    - seed = 42
     """
     def __init__(
         self,
         city_map: Optional[CityMap] = None,
-        num_ambulances: int = 4,
-        max_time: int = 360,
-        max_overtime: int = 300,
-        poisson_lambda: float = 0.05,
-        max_pending_calls: int = 3,
-        seed: Optional[int] = 42,
+        num_ambulances: int = DEFAULT_NUM_AMBULANCES,
+        max_time: int = DEFAULT_MAX_TIME,
+        max_overtime: int = DEFAULT_MAX_OVERTIME,
+        poisson_lambda: float = DEFAULT_POISSON_LAMBDA,
+        max_pending_calls: int = DEFAULT_MAX_PENDING_CALLS,
+        seed: Optional[int] = DEFAULT_SEED,
     ) -> None:
         self.seed = seed
         self.rng = np.random.default_rng(seed)
@@ -46,9 +60,12 @@ class AmbulanceDispatchEnv:
         self.max_overtime = max_overtime  # Số phút tối đa khi vượt quá thời gian mô phỏng là 300p
         self.poisson_lambda = poisson_lambda
         self.max_pending_calls = max_pending_calls
+        self.episode_count: int = 0
 
-        # Thời gian mô phỏng (phút)
+        # Thời gian mô phỏng (phút) và bước thời gian giao thông chạy song song
         self.current_minute: int = 0
+        self.traffic_time_step: int = 0
+        self.edge_keys: List[Tuple[int, int]] = sorted(self.city_map.edges.keys())
         self.next_call_id: int = 1
         self.is_truncated: bool = False
 
@@ -81,7 +98,21 @@ class AmbulanceDispatchEnv:
             "total": 0.0,
         }
 
-        self.reset(seed=seed)
+        # Xây dựng tập tất cả các cách ghép hành động tiềm năng (gồm cả không phân công)
+        # Mỗi phần tử là 1 tuple các cặp (amb_id, slot_idx) đã chuẩn hóa theo amb_id tăng dần
+        self.potential_actions: List[Tuple[Tuple[int, int], ...]] = self._build_potential_actions()
+        self.num_potential_actions: int = len(self.potential_actions)
+        self.slot_action_to_id: Dict[Tuple[Tuple[int, int], ...], int] = {
+            act: idx for idx, act in enumerate(self.potential_actions)
+        }
+
+        # Lưu thông tin hành động của bước vừa thực hiện (để ghi log và theo dõi)
+        self.last_action_id: int = 0
+        self.last_decoded_action: List[Tuple[int, int]] = []
+        self.last_valid_action_count: int = 1
+        self.last_slot_summary: str = ""
+
+        self.reset()
 
     def reset(
         self,
@@ -89,18 +120,32 @@ class AmbulanceDispatchEnv:
         generate_initial_calls: bool = True,
     ) -> Dict[str, Any]:
         """
-        Khởi tạo lại môi trường:
-        - 4 xe cứu thương ở các vị trí ban đầu ngẫu nhiên trên mạng lưới.
-        - Trạng thái ban đầu các xe luôn RẢNH (IDLE).
-        - Thời gian mô phỏng bắt đầu từ 0 phút.
-        - Tại t=0: Có thể sinh cuộc gọi mới theo Poisson xuất hiện vào đầu phút.
+        Khởi tạo lại môi trường cho một episode mới:
+        - Nếu truyền seed != None: đặt lại toàn bộ bộ sinh số ngẫu nhiên theo seed đó (tái lập kết quả).
+        - Nếu seed == None (chạy qua nhiều episode liên tiếp):
+          + Luồng sinh số ngẫu nhiên (self.rng và self.city_map.rng) tiếp tục tiến lên tự nhiên.
+          + Tái khởi tạo ngẫu nhiên độ tắc đường ban đầu trên toàn bộ 176 cung đường (reset_traffic).
+          + Sinh mới ngẫu nhiên vị trí ban đầu (cung đường & khoảng cách) cho tất cả các xe cứu thương.
+          + Sinh mới ngẫu nhiên danh sách cuộc gọi ban đầu tại t=0 (và chuỗi cuộc gọi Poisson trong suốt episode).
+          => Đảm bảo mỗi episode có kịch bản giao thông, vị trí xe và cuộc gọi hoàn toàn đa dạng, khác nhau.
         """
         if seed is not None:
             self.seed = seed
             self.rng = np.random.default_rng(seed)
-            self.city_map = CityMap(seed=seed)
+            self.city_map.reset_traffic(seed=seed)
+        elif self.episode_count >= 1:
+            # Sang các episode tiếp theo: sinh hạt giống con mới từ luồng rng đang tiến để làm mới giao thông bản đồ
+            episode_map_seed = int(self.rng.integers(0, 2**31 - 1))
+            self.city_map.reset_traffic(seed=episode_map_seed)
+        else:
+            # Episode đầu tiên ngay khi khởi tạo __init__: đảm bảo đồng bộ bộ đếm thời gian giao thông về 0
+            self.city_map.time_step = 0
+            self.city_map.traffic_time_step = 0
 
+        self.episode_count += 1
         self.current_minute = 0
+        self.traffic_time_step = 0
+        self.edge_keys = sorted(self.city_map.edges.keys())
         self.next_call_id = 1
         self.calls.clear()
         self.calls_generated_this_step.clear()
@@ -145,6 +190,11 @@ class AmbulanceDispatchEnv:
         if generate_initial_calls:
             self.calls_generated_this_step = self._generate_new_calls()
 
+        self.last_action_id = 0
+        self.last_decoded_action = []
+        self.last_valid_action_count = int(np.sum(self.get_action_mask()))
+        self.last_slot_summary = self.format_call_slots()
+
         return self.get_observation()
 
     @property
@@ -160,30 +210,281 @@ class AmbulanceDispatchEnv:
             if c.status in (CallStatus.PENDING, CallStatus.WAITING_FOR_AMBULANCE, CallStatus.AT_SCENE)
         ]
 
-    def get_valid_actions(self) -> List[Tuple[int, int]]:
+    # =========================================================================
+    # QUẢN LÝ SLOT CUỘC GỌI, TẬP HÀNH ĐỘNG TIỀM NĂNG, ACTION MASK & GIẢI MÃ
+    # =========================================================================
+    def get_call_slots(self) -> List[Optional[EmergencyCall]]:
         """
-        Xác định danh sách các hành động phân công hợp lệ:
-        A = (Xe cứu thương rảnh, Cuộc gọi đang PENDING).
-        - Xe chỉ nhận tối đa 1 cuộc gọi (chỉ các xe đang Rảnh IDLE và current_call_id is None).
-        - Chỉ cuộc gọi đang PENDING mới được chọn.
+        Sắp xếp các cuộc gọi đang PENDING vào hệ thống Slot cố định (Slot 0, Slot 1, ..., Slot M-1).
+        Quy tắc sắp xếp Slot thống nhất (Canonical FIFO Slot Rule):
+        - Chỉ xét các cuộc gọi đang ở trạng thái PENDING ('Yêu cầu xử lý').
+        - Sắp xếp tăng dần theo (created_time, call_id) (cuộc gọi xuất hiện trước xếp vào slot nhỏ hơn;
+          nếu cùng thời điểm phát sinh thì mã cuộc gọi nhỏ hơn xếp trước).
+        - Đưa lần lượt vào Slot 0, Slot 1, ..., Slot (max_pending_calls - 1).
+        - Nếu số cuộc gọi PENDING ít hơn số slot tối đa, các slot còn lại mang giá trị None (Trống).
         """
-        idle_ambs = [
-            a.ambulance_id for a in self.ambulances.values()
-            if a.status == AmbulanceStatus.IDLE and a.current_call_id is None
-        ]
-        pending_call_ids = [
-            c.call_id for c in self.calls.values()
-            if c.status == CallStatus.PENDING
-        ]
+        sorted_pending = sorted(
+            self.pending_calls,
+            key=lambda c: (c.created_time, c.call_id),
+        )
+        slots: List[Optional[EmergencyCall]] = [None] * self.max_pending_calls
+        for idx, call in enumerate(sorted_pending[: self.max_pending_calls]):
+            slots[idx] = call
+        return slots
 
-        valid_actions: List[Tuple[int, int]] = []
-        for aid in idle_ambs:
-            for cid in pending_call_ids:
-                valid_actions.append((aid, cid))
-        return valid_actions
+    def format_call_slots(self, slots: Optional[List[Optional[EmergencyCall]]] = None) -> str:
+        """Định dạng chuỗi hiển thị trạng thái các Slot cuộc gọi hiện tại."""
+        if slots is None:
+            slots = self.get_call_slots()
+        parts: List[str] = []
+        for idx, c in enumerate(slots):
+            if c is not None:
+                parts.append(f"Slot {idx}: #{c.call_id} (Mức {c.severity}, chờ {c.wait_time:.1f}p)")
+            else:
+                parts.append(f"Slot {idx}: Trống")
+        return " | ".join(parts)
+
+    def _build_potential_actions(self) -> List[Tuple[Tuple[int, int], ...]]:
+        """
+        Tạo tất cả các cách ghép hành động tiềm năng (joint slot assignments) giữa
+        N xe cứu thương (1..N) và M slot cuộc gọi (0..M-1), bao gồm cả không phân công ().
+        - Mỗi xe nhận tối đa 1 slot, mỗi slot giao tối đa cho 1 xe.
+        - Các cặp (amb_id, slot_idx) trong mỗi hành động được sắp xếp tăng dần theo amb_id.
+        - Với 4 xe và 3 slot:
+          + k = 0 (không phân công): 1 cách -> ()
+          + k = 1 (phân công 1 xe): C(4,1) * P(3,1) = 12 cách
+          + k = 2 (phân công đồng thời 2 xe): C(4,2) * P(3,2) = 36 cách
+          + k = 3 (phân công đồng thời 3 xe): C(4,3) * P(3,3) = 24 cách
+          => Tổng cộng = 73 cách ghép hành động tiềm năng.
+        """
+        amb_ids = list(range(1, self.num_ambulances + 1))
+        slot_indices = list(range(self.max_pending_calls))
+        max_k = min(self.num_ambulances, self.max_pending_calls)
+
+        potential: List[Tuple[Tuple[int, int], ...]] = [()]  # Action 0: Không phân công ()
+        for k in range(1, max_k + 1):
+            for chosen_ambs in itertools.combinations(amb_ids, k):
+                for chosen_slots in itertools.permutations(slot_indices, k):
+                    joint_action = tuple(zip(chosen_ambs, chosen_slots))
+                    potential.append(joint_action)
+        return potential
+
+    def get_action_mask(self) -> np.ndarray:
+        """
+        Xây dựng Action Mask (mảng boolean kích thước 73) để kiểm tra tính hợp lệ
+        của từng cách ghép hành động tiềm năng trong trạng thái hiện tại S_t:
+        - Action 0 (không phân công) luôn hợp lệ (mask[0] = True).
+        - Một hành động ghép ((amb_1, slot_1), (amb_2, slot_2), ...) hợp lệ (True) khi và chỉ khi:
+          1. Mọi xe amb_i trong tập đều đang RẢNH (status == IDLE và current_call_id is None).
+          2. Mọi slot_i trong tập đều đang chứa cuộc gọi PENDING (slots[slot_i] is not None).
+        """
+        slots = self.get_call_slots()
+        idle_amb_set: Set[int] = {
+            a.ambulance_id
+            for a in self.ambulances.values()
+            if a.status == AmbulanceStatus.IDLE and a.current_call_id is None
+        }
+        valid_slot_set: Set[int] = {
+            idx
+            for idx, call in enumerate(slots)
+            if call is not None and call.status == CallStatus.PENDING
+        }
+
+        mask = np.zeros(len(self.potential_actions), dtype=bool)
+        for action_idx, joint_slot_action in enumerate(self.potential_actions):
+            is_valid = True
+            for amb_id, slot_idx in joint_slot_action:
+                if amb_id not in idle_amb_set or slot_idx not in valid_slot_set:
+                    is_valid = False
+                    break
+            mask[action_idx] = is_valid
+        return mask
+
+    def is_action_valid(
+        self,
+        action: Union[int, Tuple[int, int], Sequence[Tuple[int, int]]],
+        from_slots: bool = False,
+    ) -> bool:
+        """
+        Kiểm tra tính hợp lệ của một hành động cụ thể ở trạng thái hiện tại:
+        - Nếu action là int (action_id trong [0, 72]): kiểm tra trực tiếp qua get_action_mask()[action].
+        - Nếu action là tập các cặp (amb_id, slot_idx) với from_slots=True: kiểm tra qua slot.
+        - Nếu action là tập các cặp (amb_id, call_id) (như [(1, 10), (3, 12)]):
+          kiểm tra không trùng xe, không trùng cuộc gọi, mọi xe đều IDLE và mọi cuộc gọi đều PENDING.
+        """
+        if isinstance(action, (int, np.integer)):
+            act_id = int(action)
+            if act_id < 0 or act_id >= len(self.potential_actions):
+                return False
+            return bool(self.get_action_mask()[act_id])
+
+        # Chuẩn hóa về danh sách các cặp (int, int)
+        if (
+            isinstance(action, tuple)
+            and len(action) == 2
+            and isinstance(action[0], (int, np.integer))
+            and isinstance(action[1], (int, np.integer))
+        ):
+            pairs: List[Tuple[int, int]] = [(int(action[0]), int(action[1]))]
+        else:
+            pairs = [(int(p[0]), int(p[1])) for p in action]  # type: ignore[arg-type]
+
+        seen_ambs: Set[int] = set()
+        seen_targets: Set[int] = set()
+        slots = self.get_call_slots() if from_slots else []
+
+        for amb_id, target in pairs:
+            if amb_id in seen_ambs or target in seen_targets:
+                return False
+            amb = self.ambulances.get(amb_id)
+            if amb is None or amb.status != AmbulanceStatus.IDLE or amb.current_call_id is not None:
+                return False
+
+            if from_slots:
+                if target < 0 or target >= len(slots) or slots[target] is None:
+                    return False
+                if slots[target].status != CallStatus.PENDING:
+                    return False
+            else:
+                call = self.calls.get(target)
+                if call is None or call.status != CallStatus.PENDING:
+                    return False
+
+            seen_ambs.add(amb_id)
+            seen_targets.add(target)
+
+        return True
+
+    def decode_action(
+        self,
+        action: Optional[Union[int, Tuple[int, int], Sequence[Tuple[int, int]]]],
+        from_slots: bool = False,
+    ) -> List[Tuple[int, int]]:
+        """
+        Giải mã hành động (Action Decoder) về tập các cặp phân công đồng thời hợp lệ
+        dưới dạng [(amb_id, call_id), ...] (ví dụ [(1, 10), (3, 12)] nghĩa là Xe 1 nhận cuộc gọi 10,
+        Xe 3 nhận cuộc gọi 12):
+        - Nếu action là None: trả về [] (không phân công).
+        - Nếu action là int (chỉ số action_id trong [0, 72] của self.potential_actions):
+          Lấy cách ghép theo slot self.potential_actions[action_id] = ((amb_id, slot_idx), ...),
+          ánh xạ từng slot_idx sang call_id thực tế trong get_call_slots() và lọc các cặp hợp lệ.
+        - Nếu action là tập các cặp (amb_id, slot_idx) với from_slots=True:
+          Ánh xạ slot_idx -> call_id và lọc các cặp hợp lệ 1-1.
+        - Nếu action là tập các cặp (amb_id, call_id) (ví dụ [(1, 10), (3, 12)] hoặc (1, 10)):
+          Kiểm tra và lọc các cặp hợp lệ 1-1 (xe IDLE, cuộc gọi PENDING).
+        """
+        if action is None:
+            return []
+
+        slots = self.get_call_slots()
+
+        # Trường hợp 1: action là chỉ số nguyên action_id trong [0, num_potential_actions - 1]
+        if isinstance(action, (int, np.integer)):
+            act_id = int(action)
+            if act_id < 0 or act_id >= len(self.potential_actions):
+                return []
+            slot_pairs = self.potential_actions[act_id]
+            from_slots = True
+        # Trường hợp 2: action là 1 cặp đơn lẻ (amb_id, target_id)
+        elif (
+            isinstance(action, tuple)
+            and len(action) == 2
+            and isinstance(action[0], (int, np.integer))
+            and isinstance(action[1], (int, np.integer))
+        ):
+            slot_pairs = ((int(action[0]), int(action[1])),)
+        # Trường hợp 3: action là danh sách/tập các cặp [(amb_id, target_id), ...]
+        else:
+            slot_pairs = tuple((int(p[0]), int(p[1])) for p in action)  # type: ignore[arg-type]
+
+        decoded_pairs: List[Tuple[int, int]] = []
+        assigned_ambs: Set[int] = set()
+        assigned_calls: Set[int] = set()
+
+        for amb_id, target_val in slot_pairs:
+            if amb_id in assigned_ambs:
+                continue
+            amb = self.ambulances.get(amb_id)
+            if amb is None or amb.status != AmbulanceStatus.IDLE or amb.current_call_id is not None:
+                continue
+
+            if from_slots:
+                if target_val < 0 or target_val >= len(slots):
+                    continue
+                call = slots[target_val]
+            else:
+                call = self.calls.get(target_val)
+
+            if call is None or call.status != CallStatus.PENDING:
+                continue
+            if call.call_id in assigned_calls:
+                continue
+
+            decoded_pairs.append((amb_id, call.call_id))
+            assigned_ambs.add(amb_id)
+            assigned_calls.add(call.call_id)
+
+        return decoded_pairs
+
+    def encode_action(
+        self,
+        dispatch_pairs: Optional[Union[Tuple[int, int], Sequence[Tuple[int, int]]]] = None,
+    ) -> int:
+        """
+        Mã hóa một tập các cặp phân công đồng thời [(amb_id, call_id), ...]
+        sang chỉ số hành động tiềm năng action_id trong [0, 72] dựa trên vị trí Slot hiện tại.
+        Nếu không phân công hoặc không khớp slot hợp lệ, trả về 0 (hành động không phân công).
+        """
+        if not dispatch_pairs:
+            return 0
+
+        if (
+            isinstance(dispatch_pairs, tuple)
+            and len(dispatch_pairs) == 2
+            and isinstance(dispatch_pairs[0], (int, np.integer))
+            and isinstance(dispatch_pairs[1], (int, np.integer))
+        ):
+            pairs = [(int(dispatch_pairs[0]), int(dispatch_pairs[1]))]
+        else:
+            pairs = [(int(p[0]), int(p[1])) for p in dispatch_pairs]  # type: ignore[arg-type]
+
+        slots = self.get_call_slots()
+        call_id_to_slot: Dict[int, int] = {
+            c.call_id: idx for idx, c in enumerate(slots) if c is not None
+        }
+
+        slot_pairs: List[Tuple[int, int]] = []
+        used_ambs: Set[int] = set()
+        used_slots: Set[int] = set()
+
+        for amb_id, call_id in sorted(pairs, key=lambda x: x[0]):
+            if amb_id in used_ambs or call_id not in call_id_to_slot:
+                continue
+            slot_idx = call_id_to_slot[call_id]
+            if slot_idx in used_slots:
+                continue
+            slot_pairs.append((amb_id, slot_idx))
+            used_ambs.add(amb_id)
+            used_slots.add(slot_idx)
+
+        canonical_key = tuple(slot_pairs)
+        return self.slot_action_to_id.get(canonical_key, 0)
+
+    def get_valid_action_ids(self) -> List[int]:
+        """Trả về danh sách các chỉ số action_id hợp lệ (mask[action_id] == True) ở trạng thái hiện tại."""
+        mask = self.get_action_mask()
+        return [int(idx) for idx, is_valid in enumerate(mask) if is_valid]
+
+    def get_valid_actions(self) -> List[List[Tuple[int, int]]]:
+        """
+        Trả về tất cả các tập hành động phân công đồng thời hợp lệ ở trạng thái hiện tại
+        (đã được giải mã từ các cách ghép slot hợp lệ sang dạng [(amb_id, call_id), ...]),
+        bao gồm cả hành động không phân công [].
+        """
+        return [self.decode_action(act_id) for act_id in self.get_valid_action_ids()]
 
     def get_observation(self) -> Dict[str, Any]:
-        """Quan sát trạng thái hiện tại S_t của môi trường."""
+        """Quan sát trạng thái hiện tại S_t của môi trường (kèm thông tin Slot và Action Mask)."""
         amb_obs = {}
         for aid, amb in self.ambulances.items():
             amb_obs[aid] = {
@@ -199,6 +500,23 @@ class AmbulanceDispatchEnv:
                 "route": amb.route_edges,
             }
 
+        slots = self.get_call_slots()
+        slot_obs: List[Optional[Dict[str, Any]]] = []
+        for slot_idx, c in enumerate(slots):
+            if c is not None:
+                slot_obs.append({
+                    "slot": slot_idx,
+                    "id": c.call_id,
+                    "severity": c.severity,
+                    "edge": c.edge,
+                    "dist": c.distance_from_start,
+                    "status": c.status.value,
+                    "wait_time": c.wait_time,
+                    "deadline": c.deadline,
+                })
+            else:
+                slot_obs.append(None)
+
         call_obs = [
             {
                 "id": c.call_id,
@@ -212,9 +530,38 @@ class AmbulanceDispatchEnv:
             for c in self.active_calls
         ]
 
+        # Tình trạng tắc đường trên từng cung đường có hướng (u -> v)
+        edge_congestion: Dict[Tuple[int, int], int] = {}
+        edge_obs: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        for ek in self.edge_keys:
+            edge = self.city_map.edges[ek]
+            edge_congestion[ek] = edge.congestion
+            edge_obs[ek] = {
+                "edge": ek,
+                "from_node": edge.from_node,
+                "to_node": edge.to_node,
+                "congestion": edge.congestion,
+                "congestion_name": edge.congestion_name,
+                "speed": edge.speed,
+                "length": edge.length,
+                "travel_time_minutes": round(edge.travel_time_minutes, 3),
+                "is_center": edge.is_center,
+            }
+        edge_congestion_vector = np.array(
+            [edge_congestion[ek] for ek in self.edge_keys],
+            dtype=np.int32,
+        )
+
         return {
+            "episode": self.episode_count,
             "current_minute": self.current_minute,
+            "traffic_time_step": self.traffic_time_step,
             "ambulances": amb_obs,
+            "edge_congestion": edge_congestion,
+            "edge_congestion_vector": edge_congestion_vector,
+            "edges": edge_obs,
+            "call_slots": slot_obs,
+            "action_mask": self.get_action_mask(),
             "pending_call_count": len(self.pending_calls),
             "active_calls": call_obs,
             "served_calls": self.served_calls_count,
@@ -224,15 +571,15 @@ class AmbulanceDispatchEnv:
 
     def _generate_new_calls(self) -> List[EmergencyCall]:
         """
-        Sinh cuộc gọi mới theo phân phối Poisson (k ~ Poisson(0.05)).
-        - Nếu thời gian >= 360 phút: không sinh thêm cuộc gọi.
-        - Giới hạn: Chỉ cho phép tối đa 3 cuộc gọi trong trạng thái 'Yêu cầu xử lý' (PENDING).
+        Sinh cuộc gọi mới theo phân phối Poisson (k ~ Poisson(poisson_lambda), mặc định lambda = 0.1).
+        - Nếu thời gian >= max_time (360 phút): không sinh thêm cuộc gọi.
+        - Giới hạn: Chỉ cho phép tối đa max_pending_calls (3) cuộc gọi trong trạng thái 'Yêu cầu xử lý' (PENDING).
         - Cuộc gọi vượt quá bị từ chối và tính là Thất bại.
         """
         if self.current_minute >= self.max_time:
             return []
 
-        # Số cuộc gọi sinh ra theo Poisson(0.05)
+        # Số cuộc gọi sinh ra theo Poisson(self.poisson_lambda)
         num_new_calls = int(self.rng.poisson(lam=self.poisson_lambda))
         new_calls: List[EmergencyCall] = []
 
@@ -282,17 +629,20 @@ class AmbulanceDispatchEnv:
 
     def step(
         self,
-        action: Optional[Union[Tuple[int, int], List[Tuple[int, int]]]] = None,
+        action: Optional[Union[int, Tuple[int, int], Sequence[Tuple[int, int]]]] = None,
         auto_dispatch: bool = False,
+        from_slots: bool = False,
     ) -> Tuple[Dict[str, Any], float, bool, Dict[str, Any]]:
         r"""
         Thực hiện một bước mô phỏng 1 phút: [t, t+1).
         
         Quy trình chuẩn theo yêu cầu:
-        1. Quan sát trạng thái S_t.
-        2. Xác định các hành động hợp lệ.
-        3. Chọn hành động A_t = (Xe cứu thương, Cuộc gọi).
-        4. Thực hiện phân công và lập tuyến đường cho xe mới nhận nhiệm vụ.
+        1. Quan sát trạng thái S_t và sắp xếp các cuộc gọi PENDING vào Slot (0, 1, 2).
+        2. Xây dựng Action Mask kiểm tra tính hợp lệ trên tập 73 cách ghép hành động tiềm năng.
+        3. Agent chọn hành động A_t:
+           - Có thể là chỉ số action_id \in [0, 72] (tương ứng cách ghép slot tiềm năng),
+           - Hoặc tập các cặp phân công đồng thời [(1, 10), (3, 12)] (Xe 1 nhận cuộc gọi ID 10, Xe 3 nhận ID 12).
+        4. Giải mã hành động (decode_action) và thực hiện phân công đồng thời cho các xe nhận nhiệm vụ.
         5. Trong khoảng [t, t+1):
            - Các xe di chuyển theo tuyến hiện tại (di chuyển liên tục sub-minute).
            - Xử lý sự kiện đến hiện trường, chăm sóc sơ cứu, đến BV và bàn giao.
@@ -311,28 +661,32 @@ class AmbulanceDispatchEnv:
         self.calls_failed_this_step.clear()
         self.calls_completed_this_step.clear()
 
-        # --------------------------------------------------------------------
-        # 3 & 4. XỬ LÝ HÀNH ĐỘNG PHÂN CÔNG (DISPATCH ACTIONS)
-        # --------------------------------------------------------------------
-        dispatch_pairs: List[Tuple[int, int]] = []
-        if action is not None:
-            if isinstance(action, tuple):
-                dispatch_pairs = [action]
-            elif isinstance(action, list):
-                dispatch_pairs = action
+        # Ghi nhận trạng thái Slot và Action Mask ở đầu phút t0 trước khi phân công
+        self.last_slot_summary = self.format_call_slots()
+        mask_at_t0 = self.get_action_mask()
+        self.last_valid_action_count = int(np.sum(mask_at_t0))
 
-        # Nếu chọn chế độ auto_dispatch và chưa có action cụ thể
-        if auto_dispatch and not dispatch_pairs:
-            # Phân công xe rảnh gần nhất cho cuộc gọi ưu tiên (mức độ nghiêm trọng cao hoặc chờ lâu nhất)
-            idle_ambs = [a for a in self.ambulances.values() if a.status == AmbulanceStatus.IDLE]
+        # --------------------------------------------------------------------
+        # 3 & 4. GIẢI MÃ VÀ XỬ LÝ TẬP HÀNH ĐỘNG PHÂN CÔNG ĐỒNG THỜI
+        # --------------------------------------------------------------------
+        valid_dispatch_pairs: List[Tuple[int, int]] = []
+        if action is not None:
+            # Giải mã hành động (hỗ trợ cả action_id nguyên [0..72], cặp slot, hoặc tập cặp [(amb_id, call_id), ...])
+            valid_dispatch_pairs = self.decode_action(action, from_slots=from_slots)
+        elif auto_dispatch:
+            # Chọn tập các cặp phân công đồng thời tối ưu (ưu tiên mức độ nghiêm trọng cao & chờ lâu)
+            idle_ambs = [
+                a for a in self.ambulances.values()
+                if a.status == AmbulanceStatus.IDLE and a.current_call_id is None
+            ]
             sorted_pending = sorted(
                 self.pending_calls,
-                key=lambda c: (-c.severity, c.created_time),
+                key=lambda c: (-c.severity, c.created_time, c.call_id),
             )
+            candidate_pairs: List[Tuple[int, int]] = []
             for c in sorted_pending:
                 if not idle_ambs:
                     break
-                # Tìm xe có thời gian tiếp cận nhanh nhất
                 best_amb = None
                 best_eta = float("inf")
                 for a in idle_ambs:
@@ -347,19 +701,19 @@ class AmbulanceDispatchEnv:
                         best_eta = r["total_time_minutes"]
                         best_amb = a
                 if best_amb is not None:
-                    dispatch_pairs.append((best_amb.ambulance_id, c.call_id))
+                    candidate_pairs.append((best_amb.ambulance_id, c.call_id))
                     idle_ambs.remove(best_amb)
 
-        # Áp dụng các phân công hợp lệ:
-        # - Xe chỉ nhận tối đa 1 cuộc gọi (chỉ các xe đang Rảnh IDLE và chưa có nhiệm vụ)
-        # - Một cuộc gọi được giao tối đa cho 1 xe
-        # - Chỉ cuộc gọi đang PENDING mới được chọn tiếp nhận
-        assigned_amb_ids: set[int] = set()
-        assigned_call_ids: set[int] = set()
+            # Mã hóa sang action_id trên Slot rồi giải mã ngược lại để đảm bảo thống nhất 100% qua cơ chế Slot & Mask
+            act_id = self.encode_action(candidate_pairs)
+            valid_dispatch_pairs = self.decode_action(act_id)
 
-        for aid, cid in dispatch_pairs:
-            if aid in assigned_amb_ids or cid in assigned_call_ids:
-                continue
+        # Lưu thông tin hành động đồng thời đã giải mã của bước này
+        self.last_action_id = self.encode_action(valid_dispatch_pairs)
+        self.last_decoded_action = sorted(valid_dispatch_pairs, key=lambda x: x[0])
+
+        # Thực hiện đồng thời tất cả các cặp phân công hợp lệ (amb_id, call_id) trong tập hành động
+        for aid, cid in self.last_decoded_action:
             amb = self.ambulances.get(aid)
             call = self.calls.get(cid)
             if (
@@ -370,8 +724,6 @@ class AmbulanceDispatchEnv:
                 and call.status == CallStatus.PENDING
             ):
                 amb.dispatch_to_call(call, self.city_map)
-                assigned_amb_ids.add(aid)
-                assigned_call_ids.add(cid)
 
         # --------------------------------------------------------------------
         # 5. TRONG KHOẢNG [t, t+1): CÁC XE DI CHUYỂN LIÊN TỤC & XỬ LÝ SỰ KIỆN
@@ -440,9 +792,13 @@ class AmbulanceDispatchEnv:
         # 6. TẠI t+1: CẬP NHẬT GIAO THÔNG, REROUTE, SINH CUỘC GỌI MỚI
         # --------------------------------------------------------------------
         self.current_minute += 1
+        self.traffic_time_step += 1
+        self.city_map.time_step = self.traffic_time_step - 1
+        self.city_map.traffic_time_step = self.traffic_time_step - 1
 
-        # Cập nhật trạng thái giao thông (Markov transition)
+        # Cập nhật trạng thái giao thông (Markov transition) song song với bước thời gian
         self.city_map.step_traffic()
+        self.traffic_time_step = self.city_map.traffic_time_step
 
         # Reroute xe nếu có thay đổi trên lộ trình
         for amb in self.ambulances.values():
@@ -492,8 +848,14 @@ class AmbulanceDispatchEnv:
             self.is_truncated = True
 
         info = {
+            "episode": self.episode_count,
             "minute": self.current_minute,
+            "current_minute": self.current_minute,
+            "traffic_time_step": self.traffic_time_step,
             "generated_calls": len(new_calls),
+            "action_id": self.last_action_id,
+            "decoded_action": list(self.last_decoded_action),
+            "valid_action_count": self.last_valid_action_count,
             "served": self.served_calls_count,
             "failed": self.failed_calls_count,
             "perfect": self.perfect_calls_count,
@@ -534,6 +896,7 @@ class AmbulanceDispatchEnv:
         lines: List[str] = []
 
         lines.append(f"Phút thứ {t}:")
+        lines.append(f"Bước thời gian giao thông (traffic_time_step): {self.traffic_time_step}")
         lines.append(f"Số cuộc gọi sinh ra: {len(self.calls_generated_this_step)}")
 
         if not self.calls_generated_this_step:
@@ -553,6 +916,12 @@ class AmbulanceDispatchEnv:
                 )
                 lines.append(c_info)
 
+        lines.append(f"Trạng thái Slot (đầu bước): {self.last_slot_summary}")
+        lines.append(
+            f"Hành động đồng thời (Action #{self.last_action_id}, "
+            f"hợp lệ {self.last_valid_action_count}/{self.num_potential_actions}): "
+            f"{self.last_decoded_action if self.last_decoded_action else '[] (Không phân công)'}"
+        )
         lines.append("—--------------------------------------------")
         # Thông tin từng xe
         for aid in range(1, self.num_ambulances + 1):

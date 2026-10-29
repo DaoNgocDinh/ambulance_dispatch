@@ -1,216 +1,144 @@
 # Môi Trường Bản Đồ Đô Thị 80 Nút & Mô Phỏng Điều Phối Xe Cứu Thương (Ambulance Dispatch Simulation)
 
-Hệ thống mô phỏng điều phối xe cứu thương thông minh trên nền tảng mạng lưới giao thông **80 NÚT GIAO THÔNG** (dạng cây phân nhánh kết hợp vùng lõi trung tâm dày đặc), **4 XE CỨU THƯƠNG**, **4 BỆNH VIỆN**, và cơ chế **sinh cuộc gọi cấp cứu Poisson** với quy trình ra quyết định theo tiến trình thời gian Markov (MDP).
+Hệ thống mô phỏng điều phối xe cứu thương thông minh trên nền tảng mạng lưới giao thông **80 NÚT GIAO THÔNG** (88 tuyến đường 2 chiều = **176 cung đường có hướng**), **6 XE CỨU THƯƠNG** (mặc định), **4 BỆNH VIỆN**, và cơ chế **sinh cuộc gọi cấp cứu Poisson** ($\lambda = 0.1$) với quy trình ra quyết định theo tiến trình thời gian Markov (MDP).
 
 ---
 
-## 1. Cấu Trúc Tổng Quan Thực Thể Hệ Thống
+## 1. Bảng Tổng Hợp Các Biến & Tham Số Chuẩn (Đồng Bộ Với `run_simulation.py`)
 
-### 1.1. Xe cứu thương (4 xe)
-- **Mã định danh:** Xe 1, Xe 2, Xe 3, Xe 4.
-- **Vị trí hiện tại:** Vị trí ban đầu luôn được khởi tạo **ngẫu nhiên** trên các cung đường có hướng, với khoảng cách $d \in [0, \text{length}]$.
-- **Tuyến đường hiện tại (current_route):** Danh sách các cung đường $(u \to v)$ mà xe sẽ lần lượt đi qua để đến đích.
-- **Trạng thái xe:**
-  - `Rảnh (IDLE)`: Hiện không xử lý cuộc gọi nào, sẵn sàng nhận nhiệm vụ mới. *(Lưu ý: Trạng thái ban đầu các xe luôn Rảnh)*.
+Toàn bộ các file trong dự án ([`run_simulation.py`](run_simulation.py), [`dispatch_env/types.py`](dispatch_env/types.py), [`dispatch_env/environment.py`](dispatch_env/environment.py)) sử dụng chung bộ tham số mặc định:
+
+| Tên biến / Hằng số | Giá trị mặc định | Ý nghĩa |
+| :--- | :---: | :--- |
+| `num_ambulances` (`DEFAULT_NUM_AMBULANCES`) | `6` | Số lượng xe cứu thương hoạt động trong môi trường |
+| `max_time` (`DEFAULT_MAX_TIME`) | `360` phút | Thời gian mô phỏng sinh cuộc gọi tối đa ($6.0$ giờ) |
+| `max_overtime` (`DEFAULT_MAX_OVERTIME`) | `300` phút | Thời gian quá giờ tối đa sau `max_time` trước khi dừng và báo `Truncated` (tổng tối đa $660$ phút) |
+| `poisson_lambda` (`DEFAULT_POISSON_LAMBDA`) | `0.1` | Tốc độ sinh cuộc gọi trung bình mỗi phút theo phân phối Poisson |
+| `max_pending_calls` (`DEFAULT_MAX_PENDING_CALLS`) | `3` | Số cuộc gọi tối đa được phép nằm trong hàng chờ `PENDING` (tương ứng $3$ Slot cố định `Slot 0..2`) |
+| `seed` (`DEFAULT_SEED`) | `42` | Hạt giống sinh số ngẫu nhiên khởi tạo môi trường |
+| `num_nodes` | `80` | Tổng số nút giao thông trên bản đồ (`1..80`, gồm nút trung tâm `1..20` và ngoại ô `21..80`) |
+| `num_directed_edges` | `176` | Tổng số cung đường có hướng $(u \to v)$ với độ tắc độc lập $\{1, 2, 3\}$ |
+| `num_hospitals` | `4` | Số bệnh viện ($2$ gần trung tâm: BV 1, BV 2; $2$ xa trung tâm: BV 3, BV 4) |
+| `num_potential_actions` | `229` (với $6$ xe, $3$ slot)<br>`73` (với $4$ xe, $3$ slot) | Tổng số cách ghép hành động đồng thời tiềm năng (bao gồm cả hành động không phân công `()`) |
+
+---
+
+## 2. Cấu Trúc Tổng Quan Thực Thể Hệ Thống
+
+### 2.1. Xe cứu thương (`Ambulance` - Mặc định 6 xe)
+- **Mã định danh:** `Xe 1 .. Xe 6` (tùy biến qua `num_ambulances`).
+- **Vị trí hiện tại:** Vị trí ban đầu luôn được khởi tạo **ngẫu nhiên** trên các cung đường có hướng riêng biệt, với khoảng cách $d \in [0, \text{length}]$.
+- **Tuyến đường hiện tại (`route_edges`):** Danh sách các cung đường $(u \to v)$ mà xe sẽ lần lượt đi qua để đến đích.
+- **Trạng thái xe (`AmbulanceStatus`):**
+  - `Rảnh (IDLE)`: Hiện không xử lý cuộc gọi nào, sẵn sàng nhận nhiệm vụ mới. *(Trạng thái ban đầu các xe luôn Rảnh)*.
   - `Đang đến cuộc gọi (EN_ROUTE_TO_CALL)`: Xe đang di chuyển tới vị trí nạn nhân.
   - `Xử lý tại cuộc gọi (AT_SCENE)`: Xe đã tới hiện trường và nhân viên y tế đang sơ cứu.
   - `Đang tới bệnh viện (EN_ROUTE_TO_HOSPITAL)`: Xe chở bệnh nhân di chuyển tới bệnh viện tối ưu.
   - `Xử lý tại bệnh viện (AT_HOSPITAL)`: Bàn giao bệnh nhân tại cổng cấp cứu bệnh viện.
-- **Cuộc gọi đang xử lý:** Mã `call_id` (hoặc `None/NULL` tương ứng với xe đang rảnh).
-- **Vị trí đích tới:** Vị trí hiện trường cuộc gọi hoặc bệnh viện tiếp nhận.
-- **Cơ chế thu hồi nhiệm vụ:** Khi cuộc gọi bị xoá (thất bại/hết hạn) mà xe đang trên đường tiếp cận, xe sẽ **lập tức trở về trạng thái Rảnh** và sẵn sàng tìm cuộc gọi xử lý mới.
+- **Cơ chế thu hồi nhiệm vụ:** Khi cuộc gọi bị xoá (thất bại/quá hạn) trong lúc xe đang trên đường tiếp cận, xe sẽ **lập tức trở về trạng thái Rảnh (`IDLE`)** và sẵn sàng nhận cuộc gọi mới.
 
----
-
-### 1.2. Cuộc gọi cấp cứu (Emergency Calls)
-- **Mã cuộc gọi:** Số thứ tự tăng dần ($1, 2, 3, \dots$).
+### 2.2. Cuộc gọi cấp cứu (`EmergencyCall`)
 - **Thời điểm xuất hiện:** Cuộc gọi xuất hiện vào **đầu mỗi phút**. Tại $t = 0$ có thể sinh cuộc gọi ngay từ đầu mô phỏng.
 - **Vị trí:** Nằm trên **DUY NHẤT 1 hướng đường** có hướng $u \to v$ tại khoảng cách $d$ tính từ điểm đi $u$.
-- **Mức độ nghiêm trọng:** $1, 2, 3$.
-- **Thời gian thất bại & Thời gian xử lý:**
-  - Mức độ nghiêm trọng càng cao thì thời gian cần xử lý càng tăng:
-    - **Mức 1:** Thời gian thất bại = $60$ phút, Thời gian cần xử lý = $4$ phút.
-    - **Mức 2:** Thời gian thất bại = $40$ phút, Thời gian cần xử lý = $6$ phút.
-    - **Mức 3:** Thời gian thất bại = $30$ phút, Thời gian cần xử lý = $8$ phút.
-  - **Quy tắc tính deadline:** Cuộc gọi thất bại khi thời gian vượt quá $T_{\text{deadline}} = T_{\text{created}} + T_{\text{failure}}$. **Xe đến đúng deadline (chuẩn thời gian thất bại, tức $t_{\text{arrival}} \le T_{\text{deadline}}$) vẫn tính là THÀNH CÔNG**.
-  - **Hoàn thành hoàn hảo:** Nếu hoàn thành trước $T_{\text{created}} + 50\% \times T_{\text{failure}}$ được tính là hoàn thành hoàn hảo.
-- **Trạng thái cuộc gọi:**
-  - `Yêu cầu xử lý (PENDING)`: Chưa có xe nào nhận cuộc gọi. **Chỉ cuộc gọi đang PENDING mới được chọn để phân công**.
+- **Mức độ nghiêm trọng & Cấu hình thời gian (`SEVERITY_CONFIG`):**
+  - **Mức 1:** Thời gian thất bại = $60$ phút, Thời gian cần xử lý tại hiện trường = $4$ phút.
+  - **Mức 2:** Thời gian thất bại = $40$ phút, Thời gian cần xử lý tại hiện trường = $6$ phút.
+  - **Mức 3:** Thời gian thất bại = $30$ phút, Thời gian cần xử lý tại hiện trường = $8$ phút.
+- **Quy tắc tính Deadline & Hoàn hảo:**
+  - Cuộc gọi thất bại khi thời gian vượt quá $T_{\text{deadline}} = T_{\text{created}} + T_{\text{failure}}$. **Xe đến đúng deadline ($t_{\text{arrival}} \le T_{\text{deadline}}$) được tính là THÀNH CÔNG**.
+  - Nếu hoàn thành sơ cứu trước $T_{\text{created}} + 50\% \times T_{\text{failure}}$ được tính là **hoàn thành hoàn hảo (`is_perfect = True`)**.
+- **Trạng thái cuộc gọi (`CallStatus`):**
+  - `Yêu cầu xử lý (PENDING)`: Chưa có xe nào nhận. **Chỉ cuộc gọi đang `PENDING` mới được chọn để phân công**.
   - `Đợi xe cứu thương (WAITING_FOR_AMBULANCE)`: Đã có xe nhận và đang di chuyển tới.
-  - `Đang xử lý (AT_SCENE)`: Xe đợi ở hiện trường để xử lý. **Tại đây loại bỏ hoàn toàn mốc thời gian thất bại**.
+  - `Đang xử lý (AT_SCENE)`: Xe đang ở hiện trường để sơ cứu. **Tại đây loại bỏ hoàn toàn mốc thời gian thất bại**.
   - `Hoàn thành (COMPLETED)`: Khi sơ cứu xong và xe bắt đầu xuất phát đến bệnh viện.
-  - `Thất bại (FAILED)`: Bị quá hạn thời gian chờ hoặc bị từ chối do vượt quá giới hạn hàng chờ (kèm lý do chi tiết).
-- **Quy tắc phân công (Dispatch constraints):**
-  - Xe chỉ nhận tối đa 1 cuộc gọi (xe phải đang Rảnh IDLE).
-  - Một cuộc gọi chỉ được giao tối đa cho 1 xe.
-  - Chỉ cuộc gọi đang PENDING mới được chọn tiếp nhận.
-  - Hàng chờ PENDING giới hạn tối đa 3 cuộc gọi, vượt quá sẽ bị từ chối ngay lập tức (FAILED).
+  - `Thất bại (FAILED)`: Quá hạn thời gian chờ hoặc bị từ chối do vượt quá giới hạn `max_pending_calls = 3` (ghi rõ lý do thất bại 1 lần duy nhất).
 
----
+### 2.3. Bệnh viện (`HospitalOnRoad` - 4 Bệnh viện)
+- Mỗi bệnh viện nằm trên **DUY NHẤT 1 cung đường có hướng**:
+  - **BV 1 (Đa khoa Trung tâm Thành phố - Gần trung tâm):** Cung $19 \to 3$ (+0.80 km). Thời gian bàn giao = $3.0$ phút.
+  - **BV 2 (Cấp cứu Tim mạch Nội đô - Gần trung tâm):** Cung $4 \to 9$ (+1.00 km). Thời gian bàn giao = $4.0$ phút.
+  - **BV 3 (Đa khoa Khu vực Bắc Đô thị - Xa trung tâm):** Cung $21 \to 24$ (+1.80 km). Thời gian bàn giao = $5.0$ phút.
+  - **BV 4 (Cấp cứu Ngoại ô Tây Nam - Xa trung tâm):** Cung $62 \to 65$ (+1.80 km). Thời gian bàn giao = $4.0$ phút.
 
-### 1.3. Bệnh viện (4 Bệnh viện)
-- Mỗi bệnh viện nằm trên **DUY NHẤT 1 cung đường có hướng** (không nằm trên chiều ngược lại):
-  - **BV 1 (Đa khoa Trung tâm Thành phố - Gần trung tâm):** Nằm trên cung $19 \to 3$ (+0.80 km). Thời gian gửi bệnh nhân = $3.0$ phút.
-  - **BV 2 (Cấp cứu Tim mạch Nội đô - Gần trung tâm):** Nằm trên cung $4 \to 9$ (+1.00 km). Thời gian gửi bệnh nhân = $4.0$ phút.
-  - **BV 3 (Đa khoa Khu vực Bắc Đô thị - Xa trung tâm):** Nằm trên cung $21 \to 24$ (+1.80 km). Thời gian gửi bệnh nhân = $5.0$ phút.
-  - **BV 4 (Cấp cứu Ngoại ô Tây Nam - Xa trung tâm):** Nằm trên cung $62 \to 65$ (+1.80 km). Thời gian gửi bệnh nhân = $4.0$ phút.
-- **Thời gian gửi bệnh nhân:** Khác nhau giữa các bệnh viện với biên độ dao động hợp lý ($3.0 \to 5.0$ phút).
-
----
-
-### 1.4. Tuyến đường, Vận tốc & Biến thiên Giao thông
+### 2.4. Tuyến đường, Vận tốc & Biến thiên Giao thông (`DirectedEdge`)
 - **3 trạng thái độ tắc:** `Thông thoáng (1)`, `Bình thường (2)`, `Tắc (3)`.
-- **Phân vùng tốc độ & tỉ lệ chuyển đổi:**
-  - **Vùng Trung tâm (Lõi nội đô dày đặc N1..N20):**
-    - Vận tốc cho phép thấp: Thông thoáng = $40\text{ km/h}$, Bình thường = $25\text{ km/h}$, Tắc = $12\text{ km/h}$.
-    - Tỉ lệ chuyển đổi sang trạng thái tắc tăng cao (xác suất tắc lên tới $60\% - 70\%$).
-  - **Vùng Ngoại ô (Vành đai & Hành lang phân nhánh):**
-    - Vận tốc cho phép cao: Thông thoáng = $60\text{ km/h}$, Bình thường = $40\text{ km/h}$, Tắc = $20\text{ km/h}$.
-    - Tỉ lệ chuyển đổi trạng thái tắc thấp hơn, khả năng thông thoáng cao hơn.
+- **Vùng Trung tâm (`N1..N20`):** Thông thoáng = $40\text{ km/h}$, Bình thường = $25\text{ km/h}$, Tắc = $12\text{ km/h}$ (xác suất chuyển sang tắc cao).
+- **Vùng Ngoại ô (`N21..N80`):** Thông thoáng = $60\text{ km/h}$, Bình thường = $40\text{ km/h}$, Tắc = $20\text{ km/h}$ (xác suất thông thoáng cao).
 
 ---
 
-## 2. Quy Trình Di Chuyển Liên Tục Trong 1 Phút $[t, t+1)$
+## 3. Không Gian Quan Sát (`Observation`), Hành Động Đồng Thời (`Joint Action`), Slot & Action Mask
 
-Nếu xe chuyển đổi trạng thái, đến đích hoặc hoàn thành công việc khi chưa hết 1 phút:
-1. **Tính thời gian đi đến cuối đoạn:** $t_{\text{leg}} = d_{\text{rem}} / v_{\text{minute}}$.
-2. **Chuyển sang đoạn tiếp theo** trong tuyến đường đã chọn bằng Dijkstra: rẽ sang đường mới hoặc tới cuối đường quay đầu (U-turn).
-3. **Dùng thời gian còn lại** $\Delta t = 1.0 - t_{\text{leg}}$ để tiếp tục di chuyển trên cung mới.
-4. **Xử lý sự kiện tại hiện trường / bệnh viện giữa phút:**
-   - Đến hiện trường: chuyển sang `AT_SCENE`, dùng thời gian còn lại để sơ cứu.
-   - Sơ cứu xong: hoàn thành cuộc gọi, chuyển sang `EN_ROUTE_TO_HOSPITAL`, dùng thời gian còn lại đi tới bệnh viện.
-   - Đến bệnh viện: chuyển sang `AT_HOSPITAL`, dùng thời gian còn lại để bàn giao.
-   - Bàn giao xong: chuyển về `IDLE`.
+### 3.1. Cấu Trúc `Observation` (`env.get_observation()`)
+Hàm `reset()` và `step()` trả về dictionary `obs` với đầy đủ thông tin thời gian song song và tình trạng tắc đường trên từng cung đường:
+- `obs["episode"]`: Chỉ số episode hiện tại ($1, 2, 3, \dots$).
+- `obs["current_minute"]`: Phút mô phỏng hiện tại ($0, 1, 2, \dots$).
+- `obs["traffic_time_step"]`: Bước thời gian giao thông chạy **song song** với `current_minute` ($0, 1, 2, \dots$).
+- `obs["edge_congestion"]`: `Dict[(u, v), int]` ánh xạ từng cung đường có hướng sang mức độ tắc $\{1, 2, 3\}$.
+- `obs["edge_congestion_vector"]`: `np.ndarray` kích thước `(176,)` (`dtype=int32`) chứa độ tắc của toàn bộ $176$ cung đường theo thứ tự chuẩn `env.edge_keys`.
+- `obs["edges"]`: `Dict[(u, v), Dict]` chứa chi tiết từng cung đường (`congestion`, `congestion_name`, `speed`, `length`, `travel_time_minutes`, `is_center`).
+- `obs["ambulances"]`: Trạng thái chi tiết của từng xe cứu thương.
+- `obs["call_slots"]`: Danh sách $3$ phần tử tương ứng `Slot 0`, `Slot 1`, `Slot 2` (chứa dict thông tin cuộc gọi `PENDING` hoặc `None` nếu trống).
+- `obs["action_mask"]`: `np.ndarray` boolean kiểm tra tính hợp lệ của từng cách ghép hành động tiềm năng.
 
----
+### 3.2. Quy Tắc Sắp Xếp Slot Thống Nhất (`get_call_slots()`)
+- Chỉ xét các cuộc gọi đang ở trạng thái `PENDING`.
+- Sắp xếp tăng dần theo `(created_time, call_id)` (FIFO) rồi đưa lần lượt vào `Slot 0`, `Slot 1`, `Slot 2`. Các slot chưa có cuộc gọi mang giá trị `None`.
 
-## 3. Quy Trình Mô Phỏng Từng Phút (MDP Step)
+### 3.3. Tập Hành Động Tiềm Năng, Action Mask & Giải Mã Hành Động
+- Tại mỗi phút, Agent chọn một **tập các cặp phân công đồng thời** 1-đối-1 dưới dạng `[(1, 10), (3, 12)]` (Xe 1 nhận cuộc gọi ID 10, Xe 3 nhận cuộc gọi ID 12) hoặc truyền trực tiếp chỉ số `action_id`:
+  $$\sum_{k=0}^{M} \binom{N}{k} \binom{M}{k} k! = \begin{cases} 1 + 18 + 90 + 120 = 229 & \text{khi } N = 6, M = 3 \\ 1 + 12 + 36 + 24 = 73 & \text{khi } N = 4, M = 3 \end{cases}$$
+- **`env.get_action_mask()`**: Trả về mảng boolean đánh dấu các hành động hợp lệ (`mask[0] = True` luôn hợp lệ cho hành động không phân công `()`).
+- **`env.decode_action(action)`**: Giải mã `action_id` (hoặc cặp slot) sang danh sách các cặp phân công đồng thời thực tế `[(amb_id, call_id), ...]`.
+- **`env.encode_action([(amb_id, call_id), ...])`**: Mã hóa ngược từ tập cặp phân công sang `action_id`.
 
-Tại đầu phút $t_0$:
-1. **Quan sát trạng thái hiện tại $S_t$:** Vị trí xe, cuộc gọi đang chờ, tình trạng giao thông.
-2. **Xác định các hành động hợp lệ:** Các cặp $A = (\text{Xe rảnh}, \text{Cuộc gọi PENDING})$.
-3. **Tác nhân chọn hành động $A_t$:** Phân công xe rảnh cho cuộc gọi.
-4. **Thực hiện phân công & lập tuyến đường:** Dijkstra tìm lộ trình nhanh nhất tới hiện trường.
-5. **Trong khoảng $[t, t+1)$:**
-   - Các xe di chuyển liên tục theo quy tắc sub-minute.
-   - Xử lý các sự kiện đến hiện trường, sơ cứu, đưa đi bệnh viện, bàn giao.
-   - Cập nhật thời gian chờ và kiểm tra mốc thất bại.
-6. **Tại $t+1$:**
-   - Cập nhật ma trận Markov trạng thái giao thông.
-   - Tính toán lại tuyến đường (reroute) nếu lộ trình bị ảnh hưởng.
-   - Sinh cuộc gọi mới: Poisson ($\lambda = 0.5$). Nếu $t \ge 360$, ngừng sinh cuộc gọi.
-   - Kiểm tra giới hạn: **Tối đa 3 cuộc gọi trong trạng thái PENDING**. Các cuộc gọi vượt quá bị từ chối ngay lập tức (FAILED).
-7. **Tính phần thưởng $r_t$ tại mỗi bước thời gian $t$:**
-
-   | Mức độ | Đợi (điểm trừ/ phút) ($w_c$) | Thất bại/ Quá hạn ($p_c$) | Mỗi km đi (điểm trừ/ km) | Hoàn thành ($b_c$) | Hoàn hảo ($b_c$) |
-   | :---: | :---: | :---: | :---: | :---: | :---: |
-   | **1** | $1$ | $30$ | $0.05$ | $50$ | $70$ |
-   | **2** | $2$ | $60$ | $0.05$ | $65$ | $80$ |
-   | **3** | $4$ | $120$ | $0.05$ | $70$ | $100$ |
-
-   $$r_t = -\sum_c w_c \Delta W_{c,t} - \sum_{c \in F_t} p_c - 0.05 \sum_i \Delta d_{i,t} + \sum_{c \in C_t} b_c$$
-
-   - $\Delta W_{c,t}$: thời gian cuộc gọi $c$ thực sự chờ trong bước, tính bằng phút.
-   - $w_c$: trọng số phạt chờ theo mức độ ($1, 2, 4$).
-   - $F_t$: tập cuộc gọi vừa thất bại hoặc bị từ chối trong bước.
-   - $p_c$: mức phạt thất bại theo mức độ ($30, 60, 120$).
-   - $\Delta d_{i,t}$: quãng đường xe $i$ đi trong bước, tính bằng km.
-   - $C_t$: tập cuộc gọi vừa hoàn thành trong bước.
-   - $b_c$: điểm thưởng hoàn thành thông thường ($50, 65, 70$) hoặc hoàn hảo ($70, 80, 100$).
-8. **Điều kiện kết thúc & Ngưỡng Truncated:**
-   - **Kết thúc bình thường:** Sau mốc 360 phút (ngừng sinh cuộc gọi mới), toàn bộ cuộc gọi được xử lý xong và cả 4 xe đã quay về trạng thái Rảnh (`done = True`).
-   - **Báo Truncated:** Nếu thời gian quá giờ vượt quá **300 phút** (tức chạm mốc $360 + 300 = 660$ phút) mà vẫn còn cuộc gọi chưa hoàn tất, hệ thống lập tức dừng mô phỏng, đánh dấu `Truncated` và xuất báo cáo chi tiết toàn bộ các công việc đang tồn đọng (backlog).
-9. **Trả về trạng thái mới $S_{t+1}$.**
+### 3.4. Đa Dạng Giữa Các Episode Khi Gọi `env.reset()`
+- Khi huấn luyện qua nhiều episode liên tiếp bằng cách gọi `obs = env.reset()` (không truyền `seed`), bộ sinh số ngẫu nhiên của môi trường tự động tiến lên để tạo mới hoàn toàn:
+  1. Phân bố độ tắc đường ban đầu trên toàn bộ $176$ cung đường (`city_map.reset_traffic()`),
+  2. Vị trí xuất phát ngẫu nhiên (cung đường và khoảng cách) của tất cả các xe cứu thương,
+  3. Chuỗi cuộc gọi cấp cứu phát sinh tại $t = 0$ và trong suốt episode.
+- Nếu cần tái lập chính xác một kịch bản cố định để kiểm thử, truyền `env.reset(seed=42)`.
 
 ---
 
-## 4. Cấu Trúc Thư Mục Dự Án
+## 4. Công Thức Phần Thưởng (`REWARD_CONFIG` trong `dispatch_env/types.py`)
 
-```text
-ambulance_dispatch/
-├── map_env/                    # Package bản đồ đô thị 80 nút
-│   ├── __init__.py
-│   ├── node.py                 # Nút giao thông & phân loại giao lộ (Ngã 4, 3, Rẽ, Cụt)
-│   ├── edge.py                 # Cung đường có hướng, vận tốc theo vùng, Markov transition
-│   ├── hospital.py             # Thực thể bệnh viện trên 1 cung đường có hướng
-│   └── city_map.py             # Bản đồ 80 nút, 172 cung có hướng, định tuyến Dijkstra
-├── dispatch_env/               # Package mô phỏng điều phối xe cứu thương
-│   ├── __init__.py
-│   ├── types.py                # Enum AmbulanceStatus, CallStatus, SEVERITY_CONFIG
-│   ├── call.py                 # Thực thể EmergencyCall, tính hạn thất bại & hoàn thành hoàn hảo
-│   ├── ambulance.py            # Thực thể Ambulance, di chuyển sub-minute, reroute Dijkstra
-│   └── environment.py          # AmbulanceDispatchEnv (MDP step, Poisson, limit 3 pending, log)
-├── tests/
-│   ├── test_map.py             # 8 unit tests kiểm tra bản đồ 80 nút
-│   └── test_dispatch_env.py    # 15 unit tests kiểm tra toàn diện môi trường điều phối
-├── run_simulation.py           # Script chạy thử nghiệm toàn diện 360 phút và ghi file log
-├── simulation.log              # File log chi tiết từng phút theo chuẩn format người dùng
-├── visualize_map.py            # Script vẽ sơ đồ trực quan mạng lưới
-├── city_map_80nodes.png        # Ảnh sơ đồ mạng lưới đô thị 80 nút & 4 bệnh viện
-├── requirements.txt            # Thư viện phụ thuộc (numpy, matplotlib)
-└── README.md                   # Tài liệu hướng dẫn chi tiết
-```
+| Mức độ | Đợi (điểm trừ/ phút) ($w_c$) | Thất bại/ Quá hạn ($p_c$) | Mỗi km đi (điểm trừ/ km) | Hoàn thành ($b_c$) | Hoàn hảo ($b_c$) |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| **1** | $0.5$ | $30$ | $0.05$ | $50$ | $70$ |
+| **2** | $1.0$ | $60$ | $0.05$ | $65$ | $80$ |
+| **3** | $1.5$ | $120$ | $0.05$ | $70$ | $100$ |
+
+Tại mỗi bước thời gian $t$:
+
+$$r_t = -\sum_c w_c \Delta W_{c,t} - \sum_{c \in F_t} p_c - 0.05 \sum_i \Delta d_{i,t} + \sum_{c \in C_t} b_c$$
 
 ---
 
-## 5. Định Dạng File Log Chuẩn Đầu Ra (`simulation.log`)
+## 5. Lệnh Chạy Thử Nghiệm & Kiểm Thử
 
-Mỗi bước thời gian phút $t$ được ghi theo mẫu chuẩn:
-
-```text
-Phút thứ t:
-Số cuộc gọi sinh ra: …
-Thông tin cuộc gọi …: 
-—--------------------------------------------
-Xe 1 đang di chuyển trên tuyến đường :... Hiện đang ở vị trí …. Vận tốc: … đang xử lý cuộc gọi: ….. Trạng thái: ………….
-Xe N đang di chuyển trên tuyến đường :... Hiện đang ở vị trí …. Vận tốc: … đang xử lý cuộc gọi: ….. Trạng thái: ………….
-—--------------------------------------------
-Cách tuyến đường chuyển trạng thái:
-Từ tắc -> bình thường: ………..
-Từ thông thoáng -> bình thường: ………..
-Từ bình thường -> tắc: ………..
-Từ bình thường -> thông thoáng: ………..
-Từ tắc -> thông thoáng: ………..
-Từ thông thoáng -> tắc: ………..
-—--------------------------------------------
-Số cuộc gọi thành công: 
-Số cuộc gọi thất bại:
-Lý do cuộc gọi thất bại trong phút này:
-• Cuộc gọi #X (Mức ...): [Lý do chi tiết khi thất bại - chỉ ghi 1 lần duy nhất]
-—---------------------------------------------
-Xe … đã tính toán lại đoạn đường
-```
-
----
-
-## 6. Lệnh Chạy Thử Nghiệm
-
-### 6.1. Chạy Mô Phỏng Toàn Diện & Tùy Biến Tham Số Poisson
-Mặc định ($\lambda = 0.5$):
+### 5.1. Chạy Mô Phỏng Toàn Diện (`run_simulation.py`)
+Chạy với bộ tham số mặc định (`num_ambulances = 6`, `poisson_lambda = 0.1`, `max_time = 360`, `max_overtime = 300`, `max_pending_calls = 3`, `seed = 42`):
 ```powershell
 & "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py
 ```
 
-Tùy biến tham số Poisson trực tiếp từ dòng lệnh:
+Tùy biến các tham số trực tiếp từ dòng lệnh:
 ```powershell
-# Chạy với ít cuộc gọi hơn (lambda = 0.2 cuộc gọi/phút):
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py --poisson 0.2
+# Chạy với 4 xe cứu thương và lambda = 0.2:
+& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py --ambulances 4 --poisson 0.2
 
-# Chạy với mật độ cuộc gọi cao (lambda = 1.0 cuộc gọi/phút):
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py --poisson 1.0
-
-# Chạy với thời gian và giới hạn hàng chờ tùy ý:
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py --poisson 0.8 --max_pending 5 --max_time 180 --log test.log
+# Tùy chỉnh đầy đủ các tham số:
+& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py --ambulances 6 --poisson 0.1 --max_time 360 --max_overtime 300 --max_pending 3 --seed 42 --log simulation.log
 ```
-*Mô phỏng với tiến trình Poisson, 4 xe cứu thương, 4 bệnh viện, xử lý các cuộc gọi đến khi hoàn tất và ghi ra [`simulation.log`](simulation.log).*
 
-### 6.2. Chạy Toàn Bộ 23 Unit Tests Kiểm Thử
+### 5.2. Chạy Toàn Bộ 31 Unit Tests Kiểm Thử
 ```powershell
 & "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" -m unittest discover -s tests -v
 ```
-*Tất cả 23 unit tests (8 tests bản đồ + 15 tests điều phối và quy tắc nghiệp vụ) đều vượt qua thành công.*
 
-### 6.3. Vẽ Bản Đồ Mạng Lưới
+### 5.3. Vẽ Bản Đồ Mạng Lưới 80 Nút & 4 Bệnh Viện
 ```powershell
 & "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" visualize_map.py
 ```

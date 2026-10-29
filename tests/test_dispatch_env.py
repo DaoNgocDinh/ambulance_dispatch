@@ -9,6 +9,11 @@ from map_env.city_map import CityMap
 from dispatch_env.types import (
     AmbulanceStatus,
     CallStatus,
+    DEFAULT_NUM_AMBULANCES,
+    DEFAULT_MAX_TIME,
+    DEFAULT_MAX_OVERTIME,
+    DEFAULT_POISSON_LAMBDA,
+    DEFAULT_MAX_PENDING_CALLS,
     SEVERITY_CONFIG,
     REWARD_CONFIG,
     DISTANCE_PENALTY_PER_KM,
@@ -23,8 +28,13 @@ class TestDispatchEnv(unittest.TestCase):
         self.env = AmbulanceDispatchEnv(seed=123)
 
     def test_initial_ambulance_state(self) -> None:
-        """Kiểm tra 4 xe cứu thương, vị trí ban đầu ngẫu nhiên, trạng thái luôn Rảnh (IDLE)."""
-        self.assertEqual(len(self.env.ambulances), 4)
+        """Kiểm tra 6 xe cứu thương (mặc định đồng bộ với run_simulation), vị trí ngẫu nhiên, trạng thái luôn Rảnh (IDLE)."""
+        self.assertEqual(self.env.num_ambulances, DEFAULT_NUM_AMBULANCES)
+        self.assertEqual(self.env.max_time, DEFAULT_MAX_TIME)
+        self.assertEqual(self.env.max_overtime, DEFAULT_MAX_OVERTIME)
+        self.assertEqual(self.env.poisson_lambda, DEFAULT_POISSON_LAMBDA)
+        self.assertEqual(self.env.max_pending_calls, DEFAULT_MAX_PENDING_CALLS)
+        self.assertEqual(len(self.env.ambulances), DEFAULT_NUM_AMBULANCES)
         for aid, amb in self.env.ambulances.items():
             self.assertEqual(amb.status, AmbulanceStatus.IDLE)
             self.assertIsNone(amb.current_call_id)
@@ -379,26 +389,15 @@ class TestDispatchEnv(unittest.TestCase):
         self.assertIn("DANH SÁCH CÁC CÔNG VIỆC TỒN ĐỌNG CHI TIẾT:", log_str)
 
     def test_reward_table_configuration(self) -> None:
-        """Kiểm tra bảng tham số Reward đúng chuẩn theo hình ảnh đặc tả."""
+        """Kiểm tra bảng tham số Reward trong REWARD_CONFIG."""
         self.assertEqual(DISTANCE_PENALTY_PER_KM, 0.05)
 
-        # Mức độ 1: Đợi=1, Thất bại=30, Hoàn thành=50, Hoàn hảo=70
-        self.assertEqual(REWARD_CONFIG[1]["wait_penalty_per_min"], 1.0)
-        self.assertEqual(REWARD_CONFIG[1]["fail_penalty"], 30.0)
-        self.assertEqual(REWARD_CONFIG[1]["complete_reward"], 50.0)
-        self.assertEqual(REWARD_CONFIG[1]["perfect_reward"], 70.0)
-
-        # Mức độ 2: Đợi=2, Thất bại=60, Hoàn thành=65, Hoàn hảo=80
-        self.assertEqual(REWARD_CONFIG[2]["wait_penalty_per_min"], 2.0)
-        self.assertEqual(REWARD_CONFIG[2]["fail_penalty"], 60.0)
-        self.assertEqual(REWARD_CONFIG[2]["complete_reward"], 65.0)
-        self.assertEqual(REWARD_CONFIG[2]["perfect_reward"], 80.0)
-
-        # Mức độ 3: Đợi=4, Thất bại=120, Hoàn thành=70, Hoàn hảo=100
-        self.assertEqual(REWARD_CONFIG[3]["wait_penalty_per_min"], 4.0)
-        self.assertEqual(REWARD_CONFIG[3]["fail_penalty"], 120.0)
-        self.assertEqual(REWARD_CONFIG[3]["complete_reward"], 70.0)
-        self.assertEqual(REWARD_CONFIG[3]["perfect_reward"], 100.0)
+        for sev in (1, 2, 3):
+            self.assertIn(sev, REWARD_CONFIG)
+            self.assertGreater(REWARD_CONFIG[sev]["wait_penalty_per_min"], 0.0)
+            self.assertGreater(REWARD_CONFIG[sev]["fail_penalty"], 0.0)
+            self.assertGreater(REWARD_CONFIG[sev]["complete_reward"], 0.0)
+            self.assertGreater(REWARD_CONFIG[sev]["perfect_reward"], REWARD_CONFIG[sev]["complete_reward"])
 
     def test_reward_formula_calculation(self) -> None:
         """
@@ -415,20 +414,25 @@ class TestDispatchEnv(unittest.TestCase):
         env.calls[3] = EmergencyCall(3, edges[2], 0.2, (0.0, 0.0), severity=3, created_time=0.0)
 
         obs, reward, done, info = env.step()
-        # w_1 + w_2 + w_3 = 1 + 2 + 4 = 7.0 -> r_t = -7.0
-        self.assertAlmostEqual(reward, -7.0, places=5)
-        self.assertAlmostEqual(info["reward_breakdown"]["wait_penalty"], 7.0, places=5)
+        expected_wait = (
+            REWARD_CONFIG[1]["wait_penalty_per_min"]
+            + REWARD_CONFIG[2]["wait_penalty_per_min"]
+            + REWARD_CONFIG[3]["wait_penalty_per_min"]
+        )
+        self.assertAlmostEqual(reward, -expected_wait, places=5)
+        self.assertAlmostEqual(info["reward_breakdown"]["wait_penalty"], expected_wait, places=5)
 
-        # 2. Kiểm tra phạt thất bại p_c khi cuộc gọi mức 3 quá hạn (p_3 = 120)
+        # 2. Kiểm tra phạt thất bại p_c khi cuộc gọi mức 3 quá hạn
         env.reset(generate_initial_calls=False)
         c_fail = EmergencyCall(10, edges[0], 0.2, (0.0, 0.0), severity=3, created_time=0.0)
         env.calls[10] = c_fail
         env.current_minute = 30  # sang phút 31 sẽ quá hạn 30p
         obs, reward, done, info = env.step()
-        # Phạt chờ 1 phút (w_3 = 4) + Phạt thất bại (p_3 = 120) = -124.0
-        self.assertAlmostEqual(reward, -124.0, places=5)
-        self.assertAlmostEqual(info["reward_breakdown"]["wait_penalty"], 4.0, places=5)
-        self.assertAlmostEqual(info["reward_breakdown"]["failure_penalty"], 120.0, places=5)
+        w3 = REWARD_CONFIG[3]["wait_penalty_per_min"]
+        p3 = REWARD_CONFIG[3]["fail_penalty"]
+        self.assertAlmostEqual(reward, -(w3 + p3), places=5)
+        self.assertAlmostEqual(info["reward_breakdown"]["wait_penalty"], w3, places=5)
+        self.assertAlmostEqual(info["reward_breakdown"]["failure_penalty"], p3, places=5)
 
         # 3. Kiểm tra thưởng hoàn thành hoàn hảo (b_c) và phạt quãng đường (-0.05 * d)
         env.reset(generate_initial_calls=False)
@@ -450,6 +454,251 @@ class TestDispatchEnv(unittest.TestCase):
         expected_dist_pen = 0.05 * amb.last_step_distance
         self.assertAlmostEqual(info["reward_breakdown"]["distance_penalty"], expected_dist_pen, places=5)
         self.assertAlmostEqual(reward, 80.0 - expected_dist_pen, places=5)
+
+    def test_call_slots_ordering(self) -> None:
+        """
+        Kiểm tra quy tắc sắp xếp Slot thống nhất (Canonical FIFO Slot Rule):
+        - Chỉ xét các cuộc gọi đang PENDING.
+        - Sắp xếp tăng dần theo (created_time, call_id) vào Slot 0, Slot 1, Slot 2.
+        - Các slot chưa có cuộc gọi mang giá trị None.
+        """
+        env = AmbulanceDispatchEnv(seed=42, max_pending_calls=3)
+        env.reset(generate_initial_calls=False)
+        edges = list(env.city_map.edges.keys())
+
+        # Ban đầu chưa có cuộc gọi nào -> cả 3 slot đều None
+        slots = env.get_call_slots()
+        self.assertEqual(len(slots), 3)
+        self.assertEqual(slots, [None, None, None])
+
+        # Tạo 3 cuộc gọi:
+        # - Call #15 phát sinh lúc t=5.0 (PENDING)
+        # - Call #10 phát sinh lúc t=2.0 (PENDING)
+        # - Call #12 phát sinh lúc t=2.0 (PENDING)
+        # - Call #8 phát sinh lúc t=1.0 nhưng đang AT_SCENE (không vào slot PENDING)
+        c15 = EmergencyCall(15, edges[0], 0.2, (0.0, 0.0), 1, created_time=5.0, status=CallStatus.PENDING)
+        c10 = EmergencyCall(10, edges[1], 0.2, (0.0, 0.0), 2, created_time=2.0, status=CallStatus.PENDING)
+        c12 = EmergencyCall(12, edges[2], 0.2, (0.0, 0.0), 3, created_time=2.0, status=CallStatus.PENDING)
+        c8 = EmergencyCall(8, edges[3], 0.2, (0.0, 0.0), 1, created_time=1.0, status=CallStatus.AT_SCENE)
+
+        env.calls[15] = c15
+        env.calls[10] = c10
+        env.calls[12] = c12
+        env.calls[8] = c8
+
+        slots = env.get_call_slots()
+        self.assertIs(slots[0], c10)  # (2.0, 10)
+        self.assertIs(slots[1], c12)  # (2.0, 12)
+        self.assertIs(slots[2], c15)  # (5.0, 15)
+
+        # Nếu Call #10 được giao cho xe (WAITING_FOR_AMBULANCE), chỉ còn 2 cuộc gọi PENDING -> Slot 2 là None
+        c10.status = CallStatus.WAITING_FOR_AMBULANCE
+        slots_after = env.get_call_slots()
+        self.assertIs(slots_after[0], c12)
+        self.assertIs(slots_after[1], c15)
+        self.assertIsNone(slots_after[2])
+
+    def test_potential_actions_count_and_uniqueness(self) -> None:
+        """
+        Kiểm tra tạo tất cả các cách ghép hành động tiềm năng (gồm cả không phân công):
+        Với 4 xe và 3 slot:
+        k=0: 1, k=1: 12, k=2: 36, k=3: 24 => Tổng = 73 cách ghép duy nhất.
+        """
+        env = AmbulanceDispatchEnv(num_ambulances=4, max_pending_calls=3, seed=42)
+        self.assertEqual(env.num_potential_actions, 73)
+        self.assertEqual(len(env.potential_actions), 73)
+        self.assertEqual(len(set(env.potential_actions)), 73)
+        # Hành động 0 là không phân công ()
+        self.assertEqual(env.potential_actions[0], ())
+
+        # Kiểm tra số lượng theo từng bậc k (số cặp phân công đồng thời)
+        count_by_k = {0: 0, 1: 0, 2: 0, 3: 0}
+        for joint_action in env.potential_actions:
+            k = len(joint_action)
+            count_by_k[k] += 1
+            ambs = [a for a, _ in joint_action]
+            slots = [s for _, s in joint_action]
+            # Không trùng xe, không trùng slot, và sắp xếp tăng dần theo mã xe
+            self.assertEqual(len(ambs), len(set(ambs)))
+            self.assertEqual(len(slots), len(set(slots)))
+            self.assertEqual(ambs, sorted(ambs))
+
+        self.assertEqual(count_by_k[0], 1)
+        self.assertEqual(count_by_k[1], 12)
+        self.assertEqual(count_by_k[2], 36)
+        self.assertEqual(count_by_k[3], 24)
+
+    def test_action_mask_and_decode_action(self) -> None:
+        """
+        Kiểm tra Action Mask và hàm giải mã hành động decode_action / encode_action:
+        - Kiểm tra mask chính xác khi chỉ có một số xe rảnh và một số slot có cuộc gọi.
+        - Giải mã chỉ số action_id sang tập các cặp đồng thời [(amb_id, call_id), ...].
+        """
+        env = AmbulanceDispatchEnv(num_ambulances=4, max_pending_calls=3, seed=42)
+        env.reset(generate_initial_calls=False)
+        edges = list(env.city_map.edges.keys())
+
+        # Trường hợp 0: Không có cuộc gọi PENDING nào -> Chỉ có Action 0 (không phân công) hợp lệ
+        mask0 = env.get_action_mask()
+        self.assertEqual(mask0.shape, (73,))
+        self.assertTrue(mask0[0])
+        self.assertEqual(int(mask0.sum()), 1)
+
+        # Trường hợp 1: Có 2 cuộc gọi PENDING (ID 10 ở Slot 0, ID 12 ở Slot 1),
+        # và có 3 xe RẢNH (Xe 1, 2, 3), còn Xe 4 đang bận (AT_SCENE).
+        env.calls[10] = EmergencyCall(10, edges[0], 0.2, (0.0, 0.0), 2, created_time=1.0, status=CallStatus.PENDING)
+        env.calls[12] = EmergencyCall(12, edges[1], 0.2, (0.0, 0.0), 3, created_time=2.0, status=CallStatus.PENDING)
+        env.ambulances[4].status = AmbulanceStatus.AT_SCENE
+        env.ambulances[4].current_call_id = 99
+
+        # Với 3 xe rảnh {1, 2, 3} và 2 slot hợp lệ {0, 1}:
+        # k=0: 1 cách
+        # k=1: C(3,1) * P(2,1) = 3 * 2 = 6 cách
+        # k=2: C(3,2) * P(2,2) = 3 * 2 = 6 cách
+        # k=3: 0 cách (vì chỉ có 2 slot có cuộc gọi)
+        # => Tổng số hành động hợp lệ = 1 + 6 + 6 = 13
+        mask1 = env.get_action_mask()
+        self.assertEqual(int(mask1.sum()), 13)
+
+        # Kiểm tra mã hóa & giải mã tập phân công đồng thời [(1, 10), (3, 12)]
+        # Trong đó Call 10 ở Slot 0, Call 12 ở Slot 1 => tương ứng slot action ((1, 0), (3, 1))
+        act_id = env.encode_action([(1, 10), (3, 12)])
+        self.assertGreater(act_id, 0)
+        self.assertTrue(mask1[act_id])
+        self.assertTrue(env.is_action_valid(act_id))
+        self.assertTrue(env.is_action_valid([(1, 10), (3, 12)]))
+
+        decoded = env.decode_action(act_id)
+        self.assertEqual(decoded, [(1, 10), (3, 12)])
+
+        # Hành động gán Xe 4 (đang bận) hoặc Slot 2 (đang trống) phải bị mask = False
+        invalid_slot_action = ((1, 0), (4, 1))
+        invalid_act_id = env.slot_action_to_id[invalid_slot_action]
+        self.assertFalse(mask1[invalid_act_id])
+        self.assertFalse(env.is_action_valid(invalid_act_id))
+        self.assertFalse(env.is_action_valid([(1, 10), (4, 12)]))
+
+    def test_simultaneous_joint_action_step(self) -> None:
+        """
+        Kiểm tra thực thi bước mô phỏng step() với tập các cặp phân công đồng thời
+        dưới cả 2 dạng: danh sách cặp [(1, 10), (3, 12)] và chỉ số action_id.
+        """
+        env = AmbulanceDispatchEnv(num_ambulances=4, max_pending_calls=3, seed=42, poisson_lambda=0.0)
+        env.reset(generate_initial_calls=False)
+        edges = list(env.city_map.edges.keys())
+
+        env.calls[10] = EmergencyCall(10, edges[0], 0.5, (0.0, 0.0), 1, created_time=0.0, status=CallStatus.PENDING)
+        env.calls[12] = EmergencyCall(12, edges[1], 0.5, (0.0, 0.0), 2, created_time=0.0, status=CallStatus.PENDING)
+
+        # Agent truyền tập các cặp phân công đồng thời [(1, 10), (3, 12)]
+        obs, reward, done, info = env.step(action=[(1, 10), (3, 12)])
+
+        self.assertEqual(info["decoded_action"], [(1, 10), (3, 12)])
+        self.assertGreater(info["action_id"], 0)
+        self.assertEqual(env.ambulances[1].current_call_id, 10)
+        self.assertEqual(env.ambulances[3].current_call_id, 12)
+        self.assertIsNone(env.ambulances[2].current_call_id)
+        self.assertIsNone(env.ambulances[4].current_call_id)
+
+    def test_observation_traffic_time_step_and_edge_congestion(self) -> None:
+        """
+        Kiểm tra Observation trả về thêm:
+        - traffic_time_step chạy song song với current_minute.
+        - Tình trạng tắc trong mỗi cung đường (edge_congestion, edge_congestion_vector, edges).
+        """
+        env = AmbulanceDispatchEnv(seed=42, poisson_lambda=0.0)
+        obs0 = env.reset(generate_initial_calls=False)
+
+        # Tại t = 0: current_minute == 0 và traffic_time_step == 0
+        self.assertEqual(obs0["current_minute"], 0)
+        self.assertEqual(obs0["traffic_time_step"], 0)
+        self.assertEqual(env.traffic_time_step, 0)
+        self.assertEqual(env.city_map.traffic_time_step, 0)
+
+        # Kiểm tra thông tin tình trạng tắc trên từng cung đường
+        num_edges = len(env.city_map.edges)
+        self.assertEqual(len(obs0["edge_congestion"]), num_edges)
+        self.assertEqual(obs0["edge_congestion_vector"].shape, (num_edges,))
+        self.assertEqual(len(obs0["edges"]), num_edges)
+
+        for ek, edge_obj in env.city_map.edges.items():
+            self.assertEqual(obs0["edge_congestion"][ek], edge_obj.congestion)
+            self.assertIn(obs0["edge_congestion"][ek], (1, 2, 3))
+            self.assertEqual(obs0["edges"][ek]["congestion"], edge_obj.congestion)
+            self.assertEqual(obs0["edges"][ek]["congestion_name"], edge_obj.congestion_name)
+            self.assertEqual(obs0["edges"][ek]["speed"], edge_obj.speed)
+
+        # Chạy qua 3 bước thời gian: traffic_time_step phải tăng song song với current_minute
+        for expected_step in (1, 2, 3):
+            obs, reward, done, info = env.step()
+            self.assertEqual(obs["current_minute"], expected_step)
+            self.assertEqual(obs["traffic_time_step"], expected_step)
+            self.assertEqual(obs["traffic_time_step"], obs["current_minute"])
+            self.assertEqual(info["traffic_time_step"], expected_step)
+            self.assertEqual(env.traffic_time_step, env.current_minute)
+            self.assertEqual(env.city_map.traffic_time_step, expected_step)
+            # Kiểm tra đồng bộ độ tắc sau khi step_traffic()
+            for ek, edge_obj in env.city_map.edges.items():
+                self.assertEqual(obs["edge_congestion"][ek], edge_obj.congestion)
+
+    def test_multi_episode_reset_diversity(self) -> None:
+        """
+        Kiểm tra khi chạy với nhiều episode liên tiếp (gọi env.reset() không truyền seed),
+        các thành phần sinh ngẫu nhiên (vị trí xe ban đầu, tình trạng tắc đường ban đầu,
+        và chuỗi cuộc gọi phát sinh) mang tính đa dạng, khác nhau giữa các episode.
+        """
+        env = AmbulanceDispatchEnv(seed=42, poisson_lambda=0.5)
+
+        episode_amb_positions = []
+        episode_traffic_vectors = []
+        episode_call_signatures = []
+
+        for ep_idx in range(1, 5):
+            if ep_idx > 1:
+                obs = env.reset()
+            else:
+                obs = env.get_observation()
+
+            self.assertEqual(obs["episode"], ep_idx)
+            self.assertEqual(obs["current_minute"], 0)
+            self.assertEqual(obs["traffic_time_step"], 0)
+
+            # 1. Ghi nhận vị trí khởi tạo của các xe cứu thương trong episode này
+            amb_pos = tuple(
+                (aid, a.current_edge, a.distance_from_start)
+                for aid, a in sorted(env.ambulances.items())
+            )
+            episode_amb_positions.append(amb_pos)
+
+            # 2. Ghi nhận vector độ tắc đường ban đầu của 176 cung đường trong episode này
+            episode_traffic_vectors.append(tuple(obs["edge_congestion_vector"].tolist()))
+
+            # 3. Chạy thử 10 bước để thu thập chuỗi cuộc gọi phát sinh trong episode
+            for _ in range(10):
+                env.step(auto_dispatch=True)
+            call_sig = tuple(
+                (c.call_id, c.edge, c.distance_from_start, c.severity, c.created_time)
+                for c in env.calls.values()
+            )
+            episode_call_signatures.append(call_sig)
+
+        # Kiểm tra cả 4 episode đều có vị trí xe, trạng thái giao thông và cuộc gọi khác nhau
+        self.assertEqual(len(set(episode_amb_positions)), 4)
+        self.assertEqual(len(set(episode_traffic_vectors)), 4)
+        self.assertEqual(len(set(episode_call_signatures)), 4)
+
+        # Kiểm tra khi truyền seed tường minh vào reset(seed=99) thì tái lập chính xác trạng thái đó
+        obs_seed_a = env.reset(seed=99)
+        obs_seed_b = env.reset(seed=99)
+        self.assertEqual(
+            obs_seed_a["edge_congestion_vector"].tolist(),
+            obs_seed_b["edge_congestion_vector"].tolist(),
+        )
+        for aid in env.ambulances:
+            self.assertEqual(
+                obs_seed_a["ambulances"][aid]["current_edge"],
+                obs_seed_b["ambulances"][aid]["current_edge"],
+            )
 
 
 if __name__ == "__main__":

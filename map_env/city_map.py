@@ -58,6 +58,7 @@ class CityMap:
 
         # Bước thời gian mô phỏng biến thiên giao thông
         self.time_step: int = 0
+        self.traffic_time_step: int = 0
         self.last_traffic_transitions: Dict[str, List[str]] = {
             "tac_to_binh_thuong": [],
             "thong_thoang_to_binh_thuong": [],
@@ -415,6 +416,27 @@ class CityMap:
             level = int(self.rng.choice([CONGESTION_CLEAR, CONGESTION_MODERATE, CONGESTION_HEAVY], p=probs))
             edge.congestion = level
 
+    def reset_traffic(self, seed: Optional[int] = None) -> None:
+        """
+        Khởi tạo lại trạng thái giao thông của bản đồ cho một episode mới:
+        - Nếu truyền seed != None: đặt lại bộ sinh số ngẫu nhiên theo seed đó.
+        - Nếu seed == None: tiếp tục luồng sinh số ngẫu nhiên hiện tại để tạo phân bố độ tắc mới đa dạng giữa các episode.
+        - Đặt lại time_step = 0, traffic_time_step = 0 và xóa thống kê chuyển đổi cũ.
+        """
+        if seed is not None:
+            self.rng = np.random.default_rng(seed)
+        self.time_step = 0
+        self.traffic_time_step = 0
+        self.last_traffic_transitions = {
+            "tac_to_binh_thuong": [],
+            "thong_thoang_to_binh_thuong": [],
+            "binh_thuong_to_tac": [],
+            "binh_thuong_to_thong_thoang": [],
+            "tac_to_thong_thoang": [],
+            "thong_thoang_to_tac": [],
+        }
+        self.randomize_traffic(initial=True)
+
     def step_traffic(self, rush_hour: Optional[bool] = None) -> Dict[Tuple[int, int], int]:
         """
         Cập nhật độ tắc đường ngẫu nhiên theo chuỗi Markov và thống kê biến thiên.
@@ -427,8 +449,9 @@ class CityMap:
         - Từ thông thoáng -> tắc (1 -> 3)
         """
         self.time_step += 1
+        self.traffic_time_step = self.time_step
         if rush_hour is None:
-            rush_hour = 10 <= (self.time_step % 40) <= 25
+            rush_hour = 10 <= (self.traffic_time_step % 40) <= 25
 
         transitions: Dict[str, List[str]] = {
             "tac_to_binh_thuong": [],
