@@ -47,12 +47,41 @@ class EmergencyCall:
     failure_reason: Optional[str] = None
     completion_rewarded: bool = False
     failure_penalized: bool = False
+    edge_id: int = 0
 
     def __post_init__(self) -> None:
         if self.severity in SEVERITY_CONFIG:
             fail_t, proc_t = SEVERITY_CONFIG[self.severity]
             self.failure_time = fail_t
             self.processing_time = proc_t
+
+    def to_dict(self, edge_id: Optional[int] = None) -> dict:
+        """
+        Xuất toàn bộ thông tin chi tiết của cuộc gọi cấp cứu dưới dạng dictionary,
+        đáp ứng đầy đủ các trường thời gian, phân công và định danh cung đường.
+        """
+        actual_edge_id = edge_id if edge_id is not None and edge_id != 0 else self.edge_id
+        return {
+            "id": self.call_id,
+            "call_id": self.call_id,
+            "severity": self.severity,
+            "edge": self.edge,
+            "edge_id": actual_edge_id,
+            "dist": self.distance_from_start,
+            "distance_from_start": self.distance_from_start,
+            "coord": self.coord,
+            "status": self.status.value,
+            "created_time": self.created_time,
+            "failure_time": self.failure_time,
+            "processing_time": self.processing_time,
+            "assigned_ambulance_id": self.assigned_ambulance_id,
+            "arrived_at_scene_time": self.arrived_at_scene_time,
+            "completed_time": self.completed_time,
+            "wait_time": round(self.wait_time, 2),
+            "deadline": self.deadline,
+            "perfect_threshold": self.perfect_threshold,
+            "is_perfect": self.is_perfect,
+        }
 
     @property
     def deadline(self) -> float:

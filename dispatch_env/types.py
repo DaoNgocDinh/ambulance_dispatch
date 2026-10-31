@@ -36,7 +36,7 @@ SEVERITY_CONFIG: Dict[int, Tuple[float, float]] = {
     3: (30.0, 8.0),  # Mức 3: thời gian thất bại = 30 phút, xử lý = 8 phút
 }
 
-# Cấu hình phần thưởng / hình phạt theo mức độ nghiêm trọng (1, 2, 3):
+# Cấu hình phần thưởng / hình phạt theo mức độ nghiêm trọng (1, 2, 3) (khớp chính xác bảng chuẩn):
 # | Mức độ | Đợi (điểm trừ/phút) w_c | Thất bại/Quá hạn p_c | Mỗi km đi | Hoàn thành | Hoàn hảo |
 # |   1    |           0.5           |          30          |   0.05    |     50     |    70    |
 # |   2    |           1.0           |          60          |   0.05    |     65     |    80    |

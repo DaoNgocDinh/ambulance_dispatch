@@ -700,6 +700,185 @@ class TestDispatchEnv(unittest.TestCase):
                 obs_seed_b["ambulances"][aid]["current_edge"],
             )
 
+    def test_observation_detailed_ambulance_and_call_fields(self) -> None:
+        """
+        Kiểm tra đầy đủ các biến mới trả về trong Observation theo yêu cầu:
+        1. Top-level: edge_congestion_vector, call_slots, action_mask, edges_by_id, edge_congestion_by_id.
+        2. Ambulance: target_type (và targer_type), target_edge, target_edge_id, target_dist,
+           assigned_hospital_id, hospital_handover_time, scene_time_remaining, hospital_time_remaining,
+           current_edge_id, route_edge_ids.
+        3. Call: created_time, failure_time, processing_time, assigned_ambulance_id, arrived_at_scene_time, edge_id.
+        """
+        env = AmbulanceDispatchEnv(seed=42, poisson_lambda=0.0)
+        obs = env.reset(generate_initial_calls=False)
+
+        # 1. Kiểm tra top-level observation
+        self.assertIn("edge_congestion_vector", obs)
+        self.assertIn("call_slots", obs)
+        self.assertIn("action_mask", obs)
+        self.assertIn("edges_by_id", obs)
+        self.assertIn("edge_congestion_by_id", obs)
+        self.assertEqual(obs["edge_congestion_vector"].shape, (172,))
+        self.assertEqual(len(obs["edges_by_id"]), 172)
+        self.assertEqual(len(obs["edge_congestion_by_id"]), 172)
+
+        # Kiểm tra cung đường 1 trong edges_by_id
+        edge_1 = obs["edges_by_id"][1]
+        self.assertEqual(edge_1["edge_id"], 1)
+        self.assertEqual(edge_1["id"], 1)
+        self.assertIn("edge", edge_1)
+        self.assertIn("from_node", edge_1)
+        self.assertIn("to_node", edge_1)
+        self.assertIn("congestion", edge_1)
+        self.assertIn("speed", edge_1)
+
+        # 2. Kiểm tra các biến của Ambulance ở trạng thái Rảnh ban đầu
+        for aid, amb_info in obs["ambulances"].items():
+            self.assertIn("current_edge_id", amb_info)
+            self.assertGreater(amb_info["current_edge_id"], 0)
+            self.assertIn("target_type", amb_info)
+            self.assertIn("targer_type", amb_info)
+            self.assertIsNone(amb_info["target_type"])
+            self.assertIsNone(amb_info["targer_type"])
+            self.assertIsNone(amb_info["target_edge"])
+            self.assertIsNone(amb_info["target_edge_id"])
+            self.assertIsNone(amb_info["target_dist"])
+            self.assertIsNone(amb_info["assigned_hospital_id"])
+            self.assertEqual(amb_info["hospital_handover_time"], 0.0)
+            self.assertEqual(amb_info["scene_time_remaining"], 0.0)
+            self.assertEqual(amb_info["hospital_time_remaining"], 0.0)
+            self.assertIn("route_edge_ids", amb_info)
+
+        # 3. Tạo một cuộc gọi thử nghiệm để kiểm tra các biến của Call
+        edges = list(env.city_map.edges.keys())
+        first_edge = edges[0]
+        first_edge_id = env.city_map.edge_to_id[first_edge]
+
+        test_call = EmergencyCall(
+            call_id=999,
+            edge=first_edge,
+            distance_from_start=0.5,
+            coord=(15.0, 15.0),
+            severity=2,  # failure_time = 40, processing_time = 6
+            created_time=0.0,
+            edge_id=first_edge_id,
+        )
+        env.calls[999] = test_call
+
+        obs = env.get_observation()
+        slot0_call = obs["call_slots"][0]
+        self.assertIsNotNone(slot0_call)
+        self.assertEqual(slot0_call["id"], 999)
+        self.assertEqual(slot0_call["created_time"], 0.0)
+        self.assertEqual(slot0_call["failure_time"], 40.0)
+        self.assertEqual(slot0_call["processing_time"], 6.0)
+        self.assertEqual(slot0_call["edge_id"], first_edge_id)
+        self.assertIsNone(slot0_call["assigned_ambulance_id"])
+        self.assertIsNone(slot0_call["arrived_at_scene_time"])
+
+        # 4. Phân công Xe 1 nhận cuộc gọi 999 và kiểm tra biến trong Ambulance
+        obs, reward, done, info = env.step(action=[(1, 999)])
+        amb1_info = obs["ambulances"][1]
+        self.assertEqual(amb1_info["target_type"], "call")
+        self.assertEqual(amb1_info["targer_type"], "call")
+        self.assertEqual(amb1_info["target_edge"], first_edge)
+        self.assertEqual(amb1_info["target_edge_id"], first_edge_id)
+        self.assertEqual(amb1_info["target_dist"], 0.5)
+
+        # Cuộc gọi trong call_slots đã ghi nhận assigned_ambulance_id = 1
+        # Lưu ý: Khi xe nhận cuộc gọi thì cuộc gọi chuyển sang WAITING_FOR_AMBULANCE (rời khỏi hàng chờ PENDING)
+        active_call_info = next(c for c in obs["active_calls"] if c["id"] == 999)
+        self.assertEqual(active_call_info["assigned_ambulance_id"], 1)
+
+        # 5. Kiểm tra trạng thái tới hiện trường AT_SCENE và thời gian sơ cứu scene_time_remaining
+        test_call.mark_at_scene(arrival_time=3.5)
+        amb1 = env.ambulances[1]
+        amb1.status = AmbulanceStatus.AT_SCENE
+        amb1.scene_time_remaining = 6.0
+
+        obs = env.get_observation()
+        active_call_info = next(c for c in obs["active_calls"] if c["id"] == 999)
+        self.assertEqual(active_call_info["arrived_at_scene_time"], 3.5)
+        self.assertEqual(obs["ambulances"][1]["scene_time_remaining"], 6.0)
+
+        # 6. Kiểm tra chuyển sang bệnh viện và các biến bệnh viện bàn giao
+        best_hid = amb1.select_best_hospital_and_route(env.city_map)
+        obs = env.get_observation()
+        amb1_info = obs["ambulances"][1]
+        self.assertEqual(amb1_info["target_type"], "hospital")
+        self.assertEqual(amb1_info["assigned_hospital_id"], best_hid)
+        self.assertGreater(amb1_info["hospital_handover_time"], 0.0)
+
+        # 7. Kiểm tra trạng thái tại bệnh viện AT_HOSPITAL và hospital_time_remaining
+        amb1.status = AmbulanceStatus.AT_HOSPITAL
+        amb1.hospital_time_remaining = 4.0
+        obs = env.get_observation()
+        self.assertEqual(obs["ambulances"][1]["hospital_time_remaining"], 4.0)
+
+    def test_t0_failed_calls_penalized(self) -> None:
+        """
+        Kiểm tra: Tại t=0 các cuộc gọi thất bại vẫn bị trừ điểm thưởng như thường.
+        - Khi t=0 sinh ra cuộc gọi vượt quá 3 (bị từ chối do queue overflow),
+          các cuộc gọi thất bại phải bị trừ điểm phạt ngay tại t=0 (last_step_reward, total_reward).
+        - Phút 0 hiển thị đầy đủ phạt thất bại trong format_log_step.
+        - Khi sang phút 1 (step), điểm phạt thất bại t=0 không bị mất và không bị trừ lặp lại.
+        - Hàm penalize_call_failure hoạt động chính xác và chống trừ trùng lặp.
+        """
+        # 1. Kiểm tra sinh cuộc gọi tại t=0 vượt quá 3 cuộc gọi (seed=1, poisson_lambda=5.0)
+        env = AmbulanceDispatchEnv(seed=1, poisson_lambda=5.0)
+        self.assertEqual(env.current_minute, 0)
+        self.assertEqual(len(env.calls), 4)
+        self.assertEqual(env.failed_calls_count, 1)
+
+        c4 = env.calls[4]
+        self.assertEqual(c4.status, CallStatus.FAILED)
+        self.assertEqual(c4.failure_type, "queue_overflow")
+        expected_penalty = REWARD_CONFIG[c4.severity]["fail_penalty"]
+
+        # Điểm thưởng tại t=0 phải bị trừ điểm phạt thất bại ngay lập tức
+        self.assertEqual(env.last_step_reward, -expected_penalty)
+        self.assertEqual(env.total_reward, -expected_penalty)
+        self.assertEqual(env.last_reward_breakdown["failure_penalty"], expected_penalty)
+        self.assertEqual(env.last_reward_breakdown["total"], -expected_penalty)
+
+        # Observation tại t=0 cũng phản ánh total_reward và last_step_reward
+        obs0 = env.get_observation()
+        self.assertEqual(obs0["total_reward"], -expected_penalty)
+        self.assertEqual(obs0["last_step_reward"], -expected_penalty)
+        self.assertEqual(obs0["failed_calls"], 1)
+
+        # Kiểm tra file log tại phút 0 ghi nhận điểm phạt thất bại
+        log_0 = env.format_log_step()
+        self.assertIn("Phút thứ 0:", log_0)
+        self.assertIn("Số cuộc gọi thất bại: 1", log_0)
+        self.assertIn(f"Phạt thất bại: -{expected_penalty:.2f}", log_0)
+        self.assertIn(f"Tổng Reward tích lũy: -{expected_penalty:.2f}", log_0)
+        self.assertIn("Cuộc gọi #4", log_0)
+
+        # 2. Bước sang phút 1: điểm phạt t=0 được bảo toàn trong total_reward
+        obs1, reward1, done1, info1 = env.step()
+        self.assertEqual(env.total_reward, -expected_penalty + reward1)
+        self.assertEqual(info1["total_reward"], env.total_reward)
+
+        # 3. Kiểm tra hàm penalize_call_failure trực tiếp
+        clean_env = AmbulanceDispatchEnv(seed=42, poisson_lambda=0.0)
+        clean_env.reset(generate_initial_calls=False)
+        self.assertEqual(clean_env.total_reward, 0.0)
+
+        edges = list(clean_env.city_map.edges.keys())
+        manual_call = EmergencyCall(100, edges[0], 0.5, (0.0, 0.0), severity=3, created_time=0.0)
+        clean_env.calls[100] = manual_call
+        pen = clean_env.penalize_call_failure(manual_call)
+        self.assertEqual(pen, 120.0)
+        self.assertEqual(clean_env.total_reward, -120.0)
+        self.assertEqual(clean_env.last_step_reward, -120.0)
+        self.assertEqual(clean_env.last_reward_breakdown["failure_penalty"], 120.0)
+
+        # Thử phạt lại cuộc gọi đã phạt: không bị phạt lặp lại
+        pen2 = clean_env.penalize_call_failure(manual_call)
+        self.assertEqual(pen2, 0.0)
+        self.assertEqual(clean_env.total_reward, -120.0)
+
 
 if __name__ == "__main__":
     unittest.main()

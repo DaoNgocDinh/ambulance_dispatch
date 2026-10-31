@@ -189,6 +189,21 @@ class AmbulanceDispatchEnv:
         # Tại t = 0: Cuộc gọi có thể sinh ra vào đầu phút
         if generate_initial_calls:
             self.calls_generated_this_step = self._generate_new_calls()
+            # "Tại t=0 các cuộc gọi thất bại vẫn bị trừ điểm thưởng như thường"
+            if self.calls_failed_this_step:
+                initial_fail_penalty = sum(
+                    REWARD_CONFIG[c.severity]["fail_penalty"]
+                    for c in self.calls_failed_this_step
+                )
+                self.last_step_reward = -initial_fail_penalty
+                self.total_reward = -initial_fail_penalty
+                self.last_reward_breakdown = {
+                    "wait_penalty": 0.0,
+                    "failure_penalty": initial_fail_penalty,
+                    "distance_penalty": 0.0,
+                    "completion_bonus": 0.0,
+                    "total": -initial_fail_penalty,
+                }
 
         self.last_action_id = 0
         self.last_decoded_action = []
@@ -484,59 +499,43 @@ class AmbulanceDispatchEnv:
         return [self.decode_action(act_id) for act_id in self.get_valid_action_ids()]
 
     def get_observation(self) -> Dict[str, Any]:
-        """Quan sát trạng thái hiện tại S_t của môi trường (kèm thông tin Slot và Action Mask)."""
-        amb_obs = {}
-        for aid, amb in self.ambulances.items():
-            amb_obs[aid] = {
-                "id": aid,
-                "status": amb.status.value,
-                "current_edge": amb.current_edge,
-                "distance_from_start": amb.distance_from_start,
-                "coord": amb.get_coord(self.city_map),
-                "current_speed": amb.get_current_speed(self.city_map),
-                "road_speed": amb.get_road_speed(self.city_map),
-                "current_call_id": amb.current_call_id,
-                "target_name": amb.target_name,
-                "route": amb.route_edges,
-            }
+        """Quan sát trạng thái hiện tại S_t của môi trường (kèm thông tin Slot, Edge ID và Action Mask)."""
+        amb_obs = {
+            aid: amb.to_dict(self.city_map)
+            for aid, amb in self.ambulances.items()
+        }
 
         slots = self.get_call_slots()
         slot_obs: List[Optional[Dict[str, Any]]] = []
         for slot_idx, c in enumerate(slots):
             if c is not None:
-                slot_obs.append({
-                    "slot": slot_idx,
-                    "id": c.call_id,
-                    "severity": c.severity,
-                    "edge": c.edge,
-                    "dist": c.distance_from_start,
-                    "status": c.status.value,
-                    "wait_time": c.wait_time,
-                    "deadline": c.deadline,
-                })
+                c_edge_id = c.edge_id if c.edge_id != 0 else self.city_map.edge_to_id.get(c.edge, 0)
+                c_dict = c.to_dict(edge_id=c_edge_id)
+                c_dict["slot"] = slot_idx
+                slot_obs.append(c_dict)
             else:
                 slot_obs.append(None)
 
         call_obs = [
-            {
-                "id": c.call_id,
-                "severity": c.severity,
-                "edge": c.edge,
-                "dist": c.distance_from_start,
-                "status": c.status.value,
-                "wait_time": c.wait_time,
-                "deadline": c.deadline,
-            }
+            c.to_dict(edge_id=(c.edge_id if c.edge_id != 0 else self.city_map.edge_to_id.get(c.edge, 0)))
             for c in self.active_calls
         ]
 
-        # Tình trạng tắc đường trên từng cung đường có hướng (u -> v)
+        # Tình trạng tắc đường trên từng cung đường có hướng (u -> v) và theo edge_id (1..176)
         edge_congestion: Dict[Tuple[int, int], int] = {}
+        edge_congestion_by_id: Dict[int, int] = {}
         edge_obs: Dict[Tuple[int, int], Dict[str, Any]] = {}
+        edge_obs_by_id: Dict[int, Dict[str, Any]] = {}
+
         for ek in self.edge_keys:
             edge = self.city_map.edges[ek]
+            eid = edge.edge_id
             edge_congestion[ek] = edge.congestion
-            edge_obs[ek] = {
+            edge_congestion_by_id[eid] = edge.congestion
+
+            e_info = {
+                "edge_id": eid,
+                "id": eid,
                 "edge": ek,
                 "from_node": edge.from_node,
                 "to_node": edge.to_node,
@@ -547,6 +546,9 @@ class AmbulanceDispatchEnv:
                 "travel_time_minutes": round(edge.travel_time_minutes, 3),
                 "is_center": edge.is_center,
             }
+            edge_obs[ek] = e_info
+            edge_obs_by_id[eid] = e_info
+
         edge_congestion_vector = np.array(
             [edge_congestion[ek] for ek in self.edge_keys],
             dtype=np.int32,
@@ -556,18 +558,45 @@ class AmbulanceDispatchEnv:
             "episode": self.episode_count,
             "current_minute": self.current_minute,
             "traffic_time_step": self.traffic_time_step,
-            "ambulances": amb_obs,
-            "edge_congestion": edge_congestion,
             "edge_congestion_vector": edge_congestion_vector,
-            "edges": edge_obs,
             "call_slots": slot_obs,
             "action_mask": self.get_action_mask(),
+            "ambulances": amb_obs,
+            "edges": edge_obs,
+            "edges_by_id": edge_obs_by_id,
+            "edge_congestion": edge_congestion,
+            "edge_congestion_by_id": edge_congestion_by_id,
+            "edge_id_to_nodes": dict(self.city_map.id_to_edge),
+            "nodes_to_edge_id": dict(self.city_map.edge_to_id),
             "pending_call_count": len(self.pending_calls),
             "active_calls": call_obs,
             "served_calls": self.served_calls_count,
             "failed_calls": self.failed_calls_count,
             "perfect_calls": self.perfect_calls_count,
+            "total_reward": self.total_reward,
+            "last_step_reward": self.last_step_reward,
         }
+
+    def penalize_call_failure(self, call: EmergencyCall) -> float:
+        """
+        Trừ điểm thưởng cho một cuộc gọi bị thất bại (nếu chưa bị trừ).
+        Đảm bảo tại bất kỳ thời điểm nào (kể cả tại t=0), cuộc gọi thất bại
+        đều bị trừ điểm thưởng chuẩn xác theo bảng cấu hình REWARD_CONFIG.
+        """
+        if call.failure_penalized:
+            return 0.0
+        call.failure_penalized = True
+        if call.status != CallStatus.FAILED:
+            call.status = CallStatus.FAILED
+        self.failed_calls_count += 1
+        if call not in self.calls_failed_this_step:
+            self.calls_failed_this_step.append(call)
+        penalty = REWARD_CONFIG[call.severity]["fail_penalty"]
+        self.last_step_reward -= penalty
+        self.total_reward -= penalty
+        self.last_reward_breakdown["failure_penalty"] += penalty
+        self.last_reward_breakdown["total"] -= penalty
+        return penalty
 
     def _generate_new_calls(self) -> List[EmergencyCall]:
         """
@@ -608,6 +637,7 @@ class AmbulanceDispatchEnv:
                 coord=(round(cx, 2), round(cy, 2)),
                 severity=severity,
                 created_time=float(self.current_minute),
+                edge_id=edge.edge_id,
             )
             self.next_call_id += 1
 

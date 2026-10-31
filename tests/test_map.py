@@ -151,6 +151,44 @@ class TestCityMap(unittest.TestCase):
                 self.assertEqual(route_info["distance_from_start_node"], hosp.distance_from_start)
                 self.assertGreater(route_info["total_cost"], 0.0)
 
+    def test_edge_ids_and_mappings(self) -> None:
+        """
+        Kiểm tra ID số nguyên định danh cho từng cung đường (edge_id):
+        - Đủ 172 cung đường có hướng với ID từ 1 đến 172 không trùng lặp.
+        - Ánh xạ 2 chiều giữa (u, v) và edge_id chính xác.
+        - Các bệnh viện lưu đúng edge_id của cung đường chứa nó.
+        """
+        num_edges = len(self.city_map.edges)
+        self.assertEqual(num_edges, 172)
+        self.assertEqual(len(self.city_map.edges_by_id), num_edges)
+        self.assertEqual(len(self.city_map.edge_to_id), num_edges)
+        self.assertEqual(len(self.city_map.id_to_edge), num_edges)
+
+        expected_ids = set(range(1, num_edges + 1))
+        actual_ids = {e.edge_id for e in self.city_map.edges.values()}
+        self.assertEqual(actual_ids, expected_ids)
+
+        for (u, v), edge in self.city_map.edges.items():
+            eid = edge.edge_id
+            self.assertEqual(self.city_map.edge_to_id[(u, v)], eid)
+            self.assertEqual(self.city_map.id_to_edge[eid], (u, v))
+            self.assertIs(self.city_map.edges_by_id[eid], edge)
+            self.assertIs(self.city_map.get_edge(eid), edge)
+            self.assertIs(self.city_map.get_edge((u, v)), edge)
+            self.assertEqual(self.city_map.get_edge_id(u, v), eid)
+            self.assertEqual(self.city_map.get_edge_id((u, v)), eid)
+
+        # Kiểm tra 4 bệnh viện có edge_id chuẩn xác
+        for hid, hosp in self.city_map.hospitals.items():
+            expected_eid = self.city_map.edge_to_id[(hosp.from_node, hosp.to_node)]
+            self.assertEqual(hosp.edge_id, expected_eid)
+            self.assertGreater(hosp.edge_id, 0)
+
+        # Kiểm tra set_edge_congestion bằng edge_id
+        test_edge = self.city_map.edges_by_id[1]
+        self.city_map.set_edge_congestion(1, level=CONGESTION_HEAVY)
+        self.assertEqual(test_edge.congestion, CONGESTION_HEAVY)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,6 +47,13 @@ class CityMap:
         # Danh bạ các cung đường có hướng: (u, v) -> DirectedEdge
         self.edges: Dict[Tuple[int, int], DirectedEdge] = {}
 
+        # Danh bạ các cung đường theo ID số nguyên: edge_id -> DirectedEdge
+        self.edges_by_id: Dict[int, DirectedEdge] = {}
+
+        # Ánh xạ 2 chiều giữa khóa (u, v) và ID số nguyên (1..176)
+        self.edge_to_id: Dict[Tuple[int, int], int] = {}
+        self.id_to_edge: Dict[int, Tuple[int, int]] = {}
+
         # Danh sách kề cho đồ thị có hướng: u -> [DirectedEdge]
         self.adj: Dict[int, List[DirectedEdge]] = {i: [] for i in range(1, self.num_nodes + 1)}
 
@@ -330,6 +337,14 @@ class CityMap:
             self.adj[u].append(edge_uv)
             self.adj[v].append(edge_vu)
 
+        # Đánh số ID cố định duy nhất cho toàn bộ 176 cung đường có hướng (1..176)
+        for edge_id, (u, v) in enumerate(sorted(self.edges.keys()), start=1):
+            edge = self.edges[(u, v)]
+            edge.edge_id = edge_id
+            self.edges_by_id[edge_id] = edge
+            self.edge_to_id[(u, v)] = edge_id
+            self.id_to_edge[edge_id] = (u, v)
+
     # ========================================================================
     # 3. SINH RA 4 BỆNH VIỆN: 2 GẦN TRUNG TÂM, 2 Ở XA TRUNG TÂM
     # ========================================================================
@@ -350,6 +365,7 @@ class CityMap:
             distance_from_start=dist_1,
             coord=(round(h1_x, 2), round(h1_y, 2)),
             handover_time=3.0,
+            edge_id=edge_19_3.edge_id,
         )
 
         # ==================== BỆNH VIỆN 2 (GẦN TRUNG TÂM) ====================
@@ -368,6 +384,7 @@ class CityMap:
             distance_from_start=dist_2,
             coord=(round(h2_x, 2), round(h2_y, 2)),
             handover_time=4.0,
+            edge_id=edge_4_9.edge_id,
         )
 
         # ==================== BỆNH VIỆN 3 (XA TRUNG TÂM - PHÍA BẮC) ====================
@@ -386,6 +403,7 @@ class CityMap:
             distance_from_start=dist_3,
             coord=(round(h3_x, 2), round(h3_y, 2)),
             handover_time=5.0,
+            edge_id=edge_21_24.edge_id,
         )
 
         # ==================== BỆNH VIỆN 4 (XA TRUNG TÂM - PHÍA TÂY NAM) ====================
@@ -404,6 +422,7 @@ class CityMap:
             distance_from_start=dist_4,
             coord=(round(h4_x, 2), round(h4_y, 2)),
             handover_time=4.0,
+            edge_id=edge_62_65.edge_id,
         )
 
     # ========================================================================
@@ -486,11 +505,48 @@ class CityMap:
         self.last_traffic_transitions = transitions
         return current_traffic
 
-    def set_edge_congestion(self, u: int, v: int, level: int) -> None:
-        """Đặt độ tắc đường thủ công cho hướng (u -> v)."""
-        if (u, v) not in self.edges:
-            raise ValueError(f"Không tồn tại cung đường có hướng từ {u} đến {v}.")
-        self.edges[(u, v)].set_congestion(level)
+    def get_edge(self, edge: Union[int, Tuple[int, int]]) -> DirectedEdge:
+        """Lấy DirectedEdge từ edge_id (int) hoặc edge_key (Tuple[int, int])."""
+        if isinstance(edge, (int, np.integer)):
+            return self.edges_by_id[int(edge)]
+        return self.edges[edge]
+
+    def get_edge_id(self, u: Union[int, Tuple[int, int]], v: Optional[int] = None) -> int:
+        """Lấy edge_id từ (u, v) hoặc edge tuple."""
+        if v is None and isinstance(u, tuple):
+            return self.edge_to_id[u]
+        return self.edge_to_id[(u, v)]  # type: ignore
+
+    def set_edge_congestion(
+        self,
+        u: Union[int, Tuple[int, int]],
+        v: Optional[int] = None,
+        level: Optional[int] = None,
+    ) -> None:
+        """
+        Đặt độ tắc đường thủ công:
+        - set_edge_congestion(u, v, level)
+        - set_edge_congestion((u, v), level=level)
+        - set_edge_congestion(edge_id, level=level)
+        """
+        if isinstance(u, tuple):
+            key = (int(u[0]), int(u[1]))
+            lvl = int(level if level is not None else v)
+        elif v is not None and level is not None:
+            key = (int(u), int(v))
+            lvl = int(level)
+        elif isinstance(u, (int, np.integer)) and (v is not None or level is not None):
+            eid = int(u)
+            if eid not in self.edges_by_id:
+                raise ValueError(f"Không tồn tại cung đường có edge_id = {eid}.")
+            key = self.id_to_edge[eid]
+            lvl = int(level if level is not None else v)
+        else:
+            raise ValueError(f"Tham số không hợp lệ cho set_edge_congestion: u={u}, v={v}, level={level}")
+
+        if key not in self.edges:
+            raise ValueError(f"Không tồn tại cung đường có hướng từ {key[0]} đến {key[1]}.")
+        self.edges[key].set_congestion(lvl)
 
     # ========================================================================
     # 5. TÌM ĐƯỜNG TỐI ƯU ĐẾN BỆNH VIỆN (DIJKSTRA)
@@ -578,20 +634,25 @@ class CityMap:
 
     def route_from_road_to_road(
         self,
-        start_edge: Tuple[int, int],
+        start_edge: Union[Tuple[int, int], int],
         start_dist: float,
-        dest_edge: Tuple[int, int],
+        dest_edge: Union[Tuple[int, int], int],
         dest_dist: float,
         by_travel_time: bool = True,
     ) -> Dict[str, Any]:
         """
         Tìm lộ trình chi tiết từ một vị trí trên cung đường start_edge
-        đến một vị trí trên cung đường dest_edge.
+        đến một vị trí trên cung đường dest_edge. Hỗ trợ cả Tuple[int, int] và edge_id int.
         Các phương án di chuyển tuân thủ yêu cầu:
         - Đi thẳng trên cùng cung đường (nếu start_edge == dest_edge và start_dist <= dest_dist).
         - Rẽ sang đường mới tại các nút giao.
         - Tới cuối đường quay đầu chọn tuyến đường khác (U-turn qua nút v_start).
         """
+        if isinstance(start_edge, (int, np.integer)):
+            start_edge = self.id_to_edge[int(start_edge)]
+        if isinstance(dest_edge, (int, np.integer)):
+            dest_edge = self.id_to_edge[int(dest_edge)]
+
         u_start, v_start = start_edge
         u_dest, v_dest = dest_edge
 
@@ -605,10 +666,13 @@ class CityMap:
             time_leg = (dist_leg / speed) * 60.0
             return {
                 "edges_path": [start_edge],
+                "edge_ids_path": [self.edge_to_id[start_edge]],
                 "total_time_minutes": round(time_leg, 3),
                 "total_distance_km": round(dist_leg, 3),
                 "start_edge": start_edge,
+                "start_edge_id": self.edge_to_id[start_edge],
                 "dest_edge": dest_edge,
+                "dest_edge_id": self.edge_to_id[dest_edge],
                 "dest_dist": dest_dist,
             }
 
@@ -633,15 +697,19 @@ class CityMap:
         dest_time = (dest_dist / e_dest.speed) * 60.0
 
         edges_path = [start_edge] + intermediate_edges + [dest_edge]
+        edge_ids_path = [self.edge_to_id[e] for e in edges_path]
         total_time = rem_start_time + inter_time + dest_time
         total_dist = rem_start_dist + inter_dist + dest_dist
 
         return {
             "edges_path": edges_path,
+            "edge_ids_path": edge_ids_path,
             "total_time_minutes": round(total_time, 3),
             "total_distance_km": round(total_dist, 3),
             "start_edge": start_edge,
+            "start_edge_id": self.edge_to_id[start_edge],
             "dest_edge": dest_edge,
+            "dest_edge_id": self.edge_to_id[dest_edge],
             "dest_dist": dest_dist,
         }
 
@@ -674,9 +742,11 @@ class CityMap:
                     "directed_road": f"{h.from_node} -> {h.to_node}",
                     "from_node": h.from_node,
                     "to_node": h.to_node,
+                    "edge_id": h.edge_id,
                     "distance_from_start_km": h.distance_from_start,
                     "distance_to_end_km": h.distance_to_end,
                     "total_road_length_km": h.road_length,
+                    "handover_time": h.handover_time,
                     "coord": h.coord,
                 }
                 for h in self.hospitals.values()

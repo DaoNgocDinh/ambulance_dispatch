@@ -88,6 +88,50 @@ class Ambulance:
             return self.get_road_speed(city_map)
         return 0.0
 
+    @property
+    def targer_type(self) -> Optional[str]:
+        """Bí danh cho target_type hỗ trợ trường hợp gõ theo prompt."""
+        return self.target_type
+
+    def to_dict(self, city_map: CityMap) -> Dict[str, Any]:
+        """
+        Xuất toàn bộ thông tin chi tiết của xe cứu thương dưới dạng dictionary,
+        đáp ứng đầy đủ các trường đích đến, bệnh viện bàn giao, thời gian còn lại và cung đường.
+        """
+        curr_edge_id = city_map.edge_to_id.get(self.current_edge, 0)
+        target_edge_id = city_map.edge_to_id.get(self.target_edge) if self.target_edge else None
+        handover_time = (
+            city_map.hospitals[self.assigned_hospital_id].handover_time
+            if self.assigned_hospital_id and self.assigned_hospital_id in city_map.hospitals
+            else 0.0
+        )
+        return {
+            "id": self.ambulance_id,
+            "ambulance_id": self.ambulance_id,
+            "status": self.status.value,
+            "current_edge": self.current_edge,
+            "current_edge_id": curr_edge_id,
+            "distance_from_start": self.distance_from_start,
+            "coord": self.get_coord(city_map),
+            "current_speed": self.get_current_speed(city_map),
+            "road_speed": self.get_road_speed(city_map),
+            "current_call_id": self.current_call_id,
+            "target_type": self.target_type,
+            "targer_type": self.target_type,
+            "target_id": self.target_id,
+            "target_edge": self.target_edge,
+            "target_edge_id": target_edge_id,
+            "target_dist": self.target_dist,
+            "target_name": self.target_name,
+            "assigned_hospital_id": self.assigned_hospital_id,
+            "hospital_handover_time": handover_time,
+            "scene_time_remaining": round(self.scene_time_remaining, 2),
+            "hospital_time_remaining": round(self.hospital_time_remaining, 2),
+            "route": self.route_edges,
+            "route_edge_ids": [city_map.edge_to_id.get(e, 0) for e in self.route_edges],
+            "total_distance_traveled": round(self.total_distance_traveled, 2),
+        }
+
     def dispatch_to_call(self, call: EmergencyCall, city_map: CityMap) -> None:
         """Phân công xe cứu thương đi tiếp nhận một cuộc gọi cấp cứu mới."""
         self.status = AmbulanceStatus.EN_ROUTE_TO_CALL
