@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hệ Thống Điều Phối Xe Cứu Thương Thông Minh - MDP Simulation</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+  <!-- Top Navigation Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-box">
+        <span class="logo-icon">🚑</span>
+        <div class="logo-text">
+          <h1>SMART DISPATCH COMMAND CENTER</h1>
+          <span class="subtitle">Mô Phỏng Điều Phối Cấp Cứu Đô Thị 80 Nút & Quy Trình Markov (MDP)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Clock / Time Progress -->
+    <div class="header-center">
+      <div class="time-card">
+        <div class="time-label">THỜI GIAN MÔ PHỎNG</div>
+        <div class="time-display">
+          <span class="time-val" id="clock-minute">0</span>
+          <span class="time-max">/ <span id="clock-max">360</span> phút</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="time-progress-bar" style="width: 0%;"></div>
+        </div>
+      </div>
+      <div class="status-badge" id="sim-status-badge">
+        <span class="status-dot"></span>
+        <span id="sim-status-text">SẴN SÀNG</span>
+      </div>
+    </div>
+
+    <!-- Right Header Controls -->
+    <div class="header-right">
+      <div class="header-kpis">
+        <div class="kpi-pill success-pill">
+          <span class="kpi-title">THÀNH CÔNG</span>
+          <span class="kpi-num" id="kpi-served">0</span>
+          <span class="kpi-sub" title="Số ca hoàn hảo">(★ <span id="kpi-perfect">0</span>)</span>
+        </div>
+        <div class="kpi-pill fail-pill">
+          <span class="kpi-title">THẤT BẠI</span>
+          <span class="kpi-num" id="kpi-failed">0</span>
+        </div>
+        <div class="kpi-pill reward-pill">
+          <span class="kpi-title">REWARD</span>
+          <span class="kpi-num" id="kpi-reward">0.00</span>
+        </div>
+      </div>
+
+      <div class="header-buttons">
+        <button id="btn-sound" class="icon-btn" title="Bật/Tắt âm thanh hiệu ứng">
+          <span id="sound-icon">🔊</span>
+        </button>
+        <button id="btn-export-log" class="icon-btn" title="Tải toàn bộ nhật ký mô phỏng (.log)">
+          <span>📥 Tải Log</span>
+        </button>
+        <button id="btn-config" class="btn btn-secondary" title="Cấu hình tham số môi trường">
+          <span>⚙️ Cấu Hình</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-container">
+    <!-- Left / Center: Interactive Map Canvas -->
+    <section class="map-section">
+      <div class="map-toolbar">
+        <div class="toolbar-group playback-group">
+          <button id="btn-play" class="btn btn-primary" title="Bắt đầu chạy tự động (Phím Space)">
+            <span class="btn-icon">▶</span> <span id="play-text">Chạy</span>
+          </button>
+          <button id="btn-step" class="btn btn-ctrl" title="Tiến 1 phút">
+            <span>⏭ +1p</span>
+          </button>
+          <button id="btn-step10" class="btn btn-ctrl" title="Tiến 10 phút">
+            <span>⏩ +10p</span>
+          </button>
+          <button id="btn-reset" class="btn btn-danger-outline" title="Khởi động lại mô phỏng">
+            <span>🔄 Reset</span>
+          </button>
+        </div>
+
+        <div class="toolbar-group speed-group">
+          <span class="label">Tốc độ:</span>
+          <input type="range" id="speed-slider" min="1" max="6" value="3" step="1" title="Điều chỉnh tốc độ phát">
+          <span class="speed-val" id="speed-val-text">2x</span>
+        </div>
+
+        <div class="toolbar-group mode-group">
+          <span class="label">Chế độ điều phối:</span>
+          <div class="toggle-switch">
+            <button id="mode-auto" class="toggle-btn active">🤖 Tự động (MDP)</button>
+            <button id="mode-manual" class="toggle-btn">✋ Thủ công</button>
+          </div>
+        </div>
+
+        <div class="toolbar-group map-tools">
+          <button id="btn-zoom-in" class="mini-btn" title="Phóng to">+</button>
+          <button id="btn-zoom-out" class="mini-btn" title="Thu nhỏ">-</button>
+          <button id="btn-zoom-fit" class="mini-btn" title="Vừa màn hình">⛶ Vừa</button>
+        </div>
+      </div>
+
+      <!-- Canvas Wrapper -->
+      <div class="canvas-wrapper" id="canvas-wrapper">
+        <canvas id="map-canvas"></canvas>
+
+        <!-- Floating Map Legend -->
+        <div class="map-legend">
+          <div class="legend-title">CHÚ THÍCH BẢN ĐỒ</div>
+          <div class="legend-grid">
+            <div class="legend-group">
+              <span class="group-title">Giao thông:</span>
+              <div class="legend-item"><span class="badge-dot dot-clear"></span> Thông thoáng (1)</div>
+              <div class="legend-item"><span class="badge-dot dot-mod"></span> Đông đúc (2)</div>
+              <div class="legend-item"><span class="badge-dot dot-heavy"></span> Ùn tắc (3)</div>
+            </div>
+            <div class="legend-group">
+              <span class="group-title">Xe Cứu Thương:</span>
+              <div class="legend-item"><span class="badge-dot dot-idle"></span> Rảnh (IDLE)</div>
+              <div class="legend-item"><span class="badge-dot dot-enroute"></span> Đang tới cuộc gọi</div>
+              <div class="legend-item"><span class="badge-dot dot-scene"></span> Sơ cứu hiện trường</div>
+              <div class="legend-item"><span class="badge-dot dot-hospital"></span> Chuyển tới BV</div>
+              <div class="legend-item"><span class="badge-dot dot-handover"></span> Bàn giao tại BV</div>
+            </div>
+            <div class="legend-group">
+              <span class="group-title">Cuộc gọi khẩn cấp:</span>
+              <div class="legend-item"><span class="call-badge sev-1">M1</span> 60p | Sơ cứu 4p</div>
+              <div class="legend-item"><span class="call-badge sev-2">M2</span> 40p | Sơ cứu 6p</div>
+              <div class="legend-item"><span class="call-badge sev-3">M3</span> 30p | Sơ cứu 8p</div>
+            </div>
+            <div class="legend-group">
+              <span class="group-title">Cơ sở y tế:</span>
+              <div class="legend-item"><span class="hosp-cross">✚</span> 4 Bệnh viện (BV 1-4)</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Manual Dispatch Notice Banner (hidden by default) -->
+        <div class="manual-dispatch-banner" id="manual-banner" style="display: none;">
+          <span class="banner-icon">👆</span>
+          <span id="manual-instruction">Chọn 1 xe rảnh (IDLE) rồi click vào 1 cuộc gọi đang chờ (PENDING) để phân công.</span>
+          <button id="btn-cancel-manual" class="mini-btn">Hủy chọn</button>
+        </div>
+
+        <!-- Element Inspector Tooltip / Card -->
+        <div class="inspector-popup" id="inspector-popup" style="display: none;">
+          <div class="popup-header">
+            <span class="popup-title" id="popup-title">Chi tiết thực thể</span>
+            <button class="popup-close" id="popup-close">×</button>
+          </div>
+          <div class="popup-body" id="popup-body">
+            <!-- Dynamic info loaded here -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right: Operations, MDP Metrics & Live Logs -->
+    <aside class="sidebar-section">
+      <!-- Tabs Navigation -->
+      <nav class="sidebar-tabs">
+        <button class="tab-btn active" data-tab="tab-fleet">🚑 Đội Xe & Hàng Đợi</button>
+        <button class="tab-btn" data-tab="tab-mdp">📊 Chỉ Số & MDP</button>
+        <button class="tab-btn" data-tab="tab-logs">📜 Nhật Ký Phút</button>
+      </nav>
+
+      <!-- Tab 1: Fleet & Queue -->
+      <div class="tab-content active" id="tab-fleet">
+        <!-- 3 Pending Call Slots -->
+        <div class="panel-box">
+          <div class="panel-header">
+            <h3>HÀNG ĐỢI CUỘC GỌI (3 SLOTS CỐ ĐỊNH)</h3>
+            <span class="badge" id="pending-badge">0/3 Pending</span>
+          </div>
+          <div class="slots-container" id="slots-container">
+            <!-- Dynamic Slots 0, 1, 2 -->
+          </div>
+        </div>
+
+        <!-- Ambulances Fleet -->
+        <div class="panel-box fleet-box">
+          <div class="panel-header">
+            <h3>TRẠNG THÁI ĐỘI XE CỨU THƯƠNG (<span id="fleet-count">6</span> XE)</h3>
+            <span class="badge" id="idle-badge">6/6 Rảnh</span>
+          </div>
+          <div class="ambulance-list" id="ambulance-list">
+            <!-- Dynamic Ambulance Cards -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: MDP & KPIs -->
+      <div class="tab-content" id="tab-mdp">
+        <!-- Reward Metrics -->
+        <div class="panel-box">
+          <div class="panel-header">
+            <h3>PHÂN TÍCH HÀM PHẦN THƯỞNG (REWARD)</h3>
+            <span class="badge reward-num" id="mdp-total-reward">0.00</span>
+          </div>
+          <div class="reward-breakdown-list">
+            <div class="reward-row">
+              <span class="reward-name">Phạt thời gian chờ (Wait Penalty):</span>
+              <span class="reward-val text-danger" id="r-wait">0.00</span>
+            </div>
+            <div class="reward-row">
+              <span class="reward-name">Phạt cuộc gọi thất bại (Failure Penalty):</span>
+              <span class="reward-val text-danger" id="r-fail">0.00</span>
+            </div>
+            <div class="reward-row">
+              <span class="reward-name">Phạt quãng đường di chuyển (-0.05/km):</span>
+              <span class="reward-val text-warning" id="r-dist">0.00</span>
+            </div>
+            <div class="reward-row">
+              <span class="reward-name">Thưởng hoàn thành cuộc gọi (Bonus):</span>
+              <span class="reward-val text-success" id="r-bonus">+0.00</span>
+            </div>
+            <div class="reward-divider"></div>
+            <div class="reward-row font-bold">
+              <span>Phần thưởng bước vừa qua (r_t):</span>
+              <span id="r-step">0.00</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- MDP Spaces & Mask -->
+        <div class="panel-box">
+          <div class="panel-header">
+            <h3>KHÔNG GIAN MDP & ACTION MASK</h3>
+          </div>
+          <div class="mdp-info-grid">
+            <div class="mdp-info-item">
+              <span class="label">Số hành động tiềm năng |A|:</span>
+              <span class="val" id="mdp-potential-actions">229</span>
+            </div>
+            <div class="mdp-info-item">
+              <span class="label">Hành động hợp lệ bước này:</span>
+              <span class="val text-success" id="mdp-valid-actions">1 / 229</span>
+            </div>
+            <div class="mdp-info-item">
+              <span class="label">Mã hành động chọn (action_id):</span>
+              <span class="val" id="mdp-action-id">0</span>
+            </div>
+            <div class="mdp-info-item full-width">
+              <span class="label">Phân công đồng thời giải mã:</span>
+              <span class="val code-font" id="mdp-decoded-action">[] (Không phân công)</span>
+            </div>
+            <div class="mdp-info-item full-width">
+              <span class="label">Tỉ lệ phục vụ thành công:</span>
+              <div class="progress-bar-bg">
+                <div class="progress-bar-fill bg-success" id="success-rate-bar" style="width: 0%;"></div>
+              </div>
+              <span class="val-sub" id="success-rate-text">0.0%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hospitals Overview -->
+        <div class="panel-box">
+          <div class="panel-header">
+            <h3>4 BỆNH VIỆN TIẾP NHẬN</h3>
+          </div>
+          <div class="hospital-list" id="hospital-list">
+            <!-- 4 Hospitals info loaded dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Logs -->
+      <div class="tab-content" id="tab-logs">
+        <div class="log-control-bar">
+          <div class="log-filter-buttons">
+            <button class="filter-btn active" data-filter="all">Tất cả</button>
+            <button class="filter-btn" data-filter="calls">Cuộc gọi</button>
+            <button class="filter-btn" data-filter="amb">Xe</button>
+            <button class="filter-btn" data-filter="traffic">Giao thông</button>
+          </div>
+          <button id="btn-copy-log" class="mini-btn">📋 Copy</button>
+        </div>
+        <div class="log-container" id="log-container">
+          <pre id="log-text">Đang tải dữ liệu mô phỏng...</pre>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Configuration Modal -->
+  <div class="modal-backdrop" id="config-modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>⚙️ CẤU HÌNH THAM SỐ MÔ PHỎNG</h2>
+        <button class="modal-close" id="modal-close-btn">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-ambulances">Số lượng xe cứu thương:</label>
+            <input type="number" id="cfg-ambulances" min="1" max="12" value="6">
+            <span class="help-text">Mặc định: 6 xe (ban đầu rảnh)</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-lambda">Tốc độ sinh cuộc gọi (Poisson λ):</label>
+            <input type="number" id="cfg-lambda" min="0.01" max="1.0" step="0.05" value="0.1">
+            <span class="help-text">Mặc định: 0.1 cuộc gọi / phút</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-max-pending">Số cuộc gọi chờ tối đa (Slots):</label>
+            <input type="number" id="cfg-max-pending" min="1" max="5" value="3">
+            <span class="help-text">Mặc định: 3 (vượt quá sẽ từ chối)</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-max-time">Thời gian nhận cuộc gọi (phút):</label>
+            <input type="number" id="cfg-max-time" min="30" max="1440" step="30" value="360">
+            <span class="help-text">Mặc định: 360 phút (6.0 giờ)</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-overtime">Giới hạn thời gian quá giờ (phút):</label>
+            <input type="number" id="cfg-overtime" min="60" max="720" step="60" value="300">
+            <span class="help-text">Mặc định: 300 phút quá giờ</span>
+          </div>
+          <div class="form-group">
+            <label for="cfg-seed">Hạt giống ngẫu nhiên (Seed):</label>
+            <input type="number" id="cfg-seed" min="0" max="999999" value="42">
+            <span class="help-text">Mặc định: 42 (đảm bảo tái lập)</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-modal-cancel" class="btn btn-secondary">Hủy</button>
+        <button id="btn-modal-save" class="btn btn-primary">Áp dụng & Khởi động lại</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

@@ -245,3 +245,29 @@ Tùy biến các tham số trực tiếp từ dòng lệnh:
 ```powershell
 & "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" visualize_map.py
 ```
+
+
+### 5.4. Khởi Chạy Giao Diện Trực Quan Hóa & Điều Phối (Web & Desktop GUI)
+Hệ thống cung cấp 2 giải pháp giao diện tương tác trực quan thời gian thực:
+
+1. **Giao diện Web Dashboard Hiện Đại (Khuyên dùng):**
+   - Bản đồ 80 nút tương tác với Canvas mượt mà (Pan & Zoom, rê chuột xem chi tiết, điều chỉnh tốc độ).
+   - Hiển thị trực quan 172 cung đường có hướng phân biệt tắc đường (🟢 Thông thoáng, 🟡 Đông đúc, 🔴 Ùn tắc).
+   - Mô phỏng di chuyển liên tục của xe cứu thương kèm hiệu ứng còi đèn, lộ trình dự kiến tới nạn nhân/bệnh viện.
+   - Bảng điều khiển thời gian thực: 3 Slot hàng đợi cố định, thống kê KPI, biểu đồ Reward, phân tích MDP Action Mask.
+   - Hỗ trợ cả 2 chế độ: **Tự động MDP** hoặc **Phân công thủ công (Manual Dispatch)**.
+   - Âm thanh hiệu ứng thông báo khi có ca cấp cứu, phân công xe, hoàn thành hoặc thất bại.
+   ```powershell
+   python run_ui.py
+   # hoặc:
+   python web_gui.py
+   ```
+   *(Trình duyệt sẽ tự động mở tại `http://localhost:8000`)*
+
+2. **Giao diện Desktop Tkinter Độc Lập:**
+   - Ứng dụng Desktop Windows native, không cần mở trình duyệt web.
+   ```powershell
+   python run_ui.py --desktop
+   # hoặc:
+   python gui_app.py
+   ```
