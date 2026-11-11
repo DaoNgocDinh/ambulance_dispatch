@@ -19,7 +19,7 @@ class EmergencyCall:
     - coord: Tọa độ địa lý (x, y) trên bản đồ (km).
     - severity: Mức độ nghiêm trọng (1, 2, 3).
     - created_time: Thời điểm phát sinh (phút).
-    - failure_time: Khoảng thời gian cho phép trước khi thất bại (30, 40, 60 phút).
+    - failure_time: Khoảng thời gian cho phép trước khi thất bại (mặc định theo mức: 60, 40, 30 phút).
     - processing_time: Thời gian cần để nhân viên y tế sơ cứu/xử lý tại hiện trường (4, 6, 8 phút).
     - wait_time: Thời gian đã chờ xe cứu thương tới hiện trường (phút).
     - status: Trạng thái cuộc gọi.
