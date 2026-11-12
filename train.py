@@ -10,14 +10,27 @@ Moi nguoi chi can viet 1 file agent tuan thu "hop dong interface"
 (xem phan HOP DONG ben duoi). Khong ai duoc sua group_adapter.py
 hay code trong dispatch_env/ - env va adapter la phan DUNG CHUNG.
 
+PHUONG AN B (khong truyen learning_rate tu train.py):
+2 agent TD tu hardcode learning_rate trong file cua minh.
+
 HOP DONG INTERFACE (bat buoc cho ca 3 agent):
-  1. Constructor: Agent(number_of_actions, discount_factor=0.95,
-       epsilon=1.0, minimum_epsilon=0.05, epsilon_decay=0.995, seed=42)
-  2. select_action(state, valid_actions, training=True) -> int
+  1. Constructor:
+     - MC:         MonteCarloAgent(number_of_actions, discount_factor=0.95,
+                       epsilon=1.0, minimum_epsilon=0.05,
+                       epsilon_decay=0.995, seed=42)
+     - Q-learning: QLearningAgent(number_of_actions, discount_factor=0.95,
+                       epsilon=1.0, minimum_epsilon=0.05,
+                       epsilon_decay=0.995, seed=42)
+                       (tu them learning_rate=... mac dinh ben trong,
+                        train.py KHONG truyen tham so nay)
+     - SARSA:      SarsaAgent(...) giong Q-learning
+  2. Thuoc tinh bat buoc: self.epsilon (float), self.q_table (dict)
+     (train.py doc ca hai de ghi log moi episode)
+  3. select_action(state, valid_actions, training=True) -> int
      (state la tuple do adapter tao; chi chon trong valid_actions)
-  3. decay_exploration() -> None   (giam epsilon sau moi episode)
-  4. save(path) / load(path)       (luu/nạp model, khuyen nghi pickle)
-  5. Ham cap nhat:
+  4. decay_exploration() -> None   (giam epsilon sau moi episode)
+  5. save(path) / load(path)       (luu/nạp model, khuyen nghi pickle)
+  6. Ham cap nhat:
      - MC:       update_episode(episode)  (episode = list (s, a, r))
      - Q-learning/SARSA: update(state, action, reward,
                                 next_state, next_valid_actions, done)
@@ -53,11 +66,11 @@ def build_agent(algo: str, number_of_actions: int, args) -> object:
     if algo == "qlearning":
         from qlearning_agent import QLearningAgent  # file cua ban Q-learning
 
-        return QLearningAgent(learning_rate=args.lr, **common)
+        return QLearningAgent(**common)  # learning_rate do file agent tu dinh
     if algo == "sarsa":
         from sarsa_agent import SarsaAgent  # file cua ban SARSA
 
-        return SarsaAgent(learning_rate=args.lr, **common)
+        return SarsaAgent(**common)  # learning_rate do file agent tu dinh
     raise ValueError(f"algo khong hop le: {algo} (chon mc/qlearning/sarsa)")
 
 
@@ -167,8 +180,6 @@ def parse_args():
     p.add_argument("--episodes", type=int, default=300)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--gamma", type=float, default=0.95)
-    p.add_argument("--lr", type=float, default=0.1,
-                   help="learning rate cho Q-learning/SARSA (MC khong dung)")
     p.add_argument("--epsilon-decay", type=float, default=0.995)
     p.add_argument("--max-time", type=int, default=360,
                    help="so phut mo phong moi episode")
