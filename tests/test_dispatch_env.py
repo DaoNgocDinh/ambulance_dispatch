@@ -670,7 +670,7 @@ class TestDispatchEnv(unittest.TestCase):
             )
             episode_amb_positions.append(amb_pos)
 
-            # 2. Ghi nhận vector độ tắc đường ban đầu của 176 cung đường trong episode này
+            # 2. Ghi nhận vector độ tắc đường ban đầu của 172 cung đường trong episode này
             episode_traffic_vectors.append(tuple(obs["edge_congestion_vector"].tolist()))
 
             # 3. Chạy thử 10 bước để thu thập chuỗi cuộc gọi phát sinh trong episode
@@ -814,6 +814,101 @@ class TestDispatchEnv(unittest.TestCase):
         amb1.hospital_time_remaining = 4.0
         obs = env.get_observation()
         self.assertEqual(obs["ambulances"][1]["hospital_time_remaining"], 4.0)
+
+    def test_observation_route_is_snapshot(self) -> None:
+        """Observation route phải là bản copy, không bị thay đổi khi xe tiếp tục di chuyển."""
+        env = AmbulanceDispatchEnv(seed=42, poisson_lambda=0.0)
+        env.reset(generate_initial_calls=False)
+
+        amb = env.ambulances[1]
+        e1, e2 = (1, 18), (18, 2)
+        amb.current_edge = e1
+        amb.distance_from_start = env.city_map.edges[e1].length - 0.01
+        amb.status = AmbulanceStatus.EN_ROUTE_TO_CALL
+        amb.current_call_id = 99
+        amb.route_edges = [e1, e2]
+        amb.target_type = "call"
+        amb.target_id = 99
+        amb.target_edge = e2
+        amb.target_dist = 0.2
+        amb.target_name = "test"
+
+        call = EmergencyCall(
+            99, e2, 0.2, (0.0, 0.0), 1, 0.0,
+            status=CallStatus.WAITING_FOR_AMBULANCE,
+            assigned_ambulance_id=1,
+        )
+        env.calls[99] = call
+
+        obs = env.get_observation()
+        route_snapshot = obs["ambulances"][1]["route"]
+        self.assertEqual(route_snapshot, [e1, e2])
+        self.assertIsNot(route_snapshot, amb.route_edges)
+
+        env.step()
+
+        self.assertEqual(route_snapshot, [e1, e2])
+        self.assertNotEqual(amb.route_edges, [e1, e2])
+
+    def test_invalid_action_contract_current_behavior(self) -> None:
+        """Ghi nhận contract invalid action hiện tại: no-op ngoài range, partial decode khi mask False."""
+        env = AmbulanceDispatchEnv(num_ambulances=4, max_pending_calls=3, seed=42, poisson_lambda=0.0)
+        env.reset(generate_initial_calls=False)
+        edges = list(env.city_map.edges.keys())
+        env.calls[10] = EmergencyCall(
+            10, edges[0], 0.5, (0.0, 0.0), 1, 0.0,
+            status=CallStatus.PENDING,
+        )
+
+        for invalid_id in (-1, env.num_potential_actions):
+            self.assertEqual(env.decode_action(invalid_id), [])
+            self.assertFalse(env.is_action_valid(invalid_id))
+
+        masked_action_id = env.slot_action_to_id[((1, 0), (2, 1))]
+        self.assertFalse(env.get_action_mask()[masked_action_id])
+        self.assertFalse(env.is_action_valid(masked_action_id))
+        self.assertEqual(env.decode_action(masked_action_id), [(1, 10)])
+
+        obs, reward, done, info = env.step(action=masked_action_id)
+        self.assertEqual(info["decoded_action"], [(1, 10)])
+        self.assertEqual(env.ambulances[1].current_call_id, 10)
+        self.assertIsNone(env.ambulances[2].current_call_id)
+
+    def test_completion_rewarded_only_once(self) -> None:
+        """Completion bonus chỉ được cộng một lần cho mỗi cuộc gọi."""
+        env = AmbulanceDispatchEnv(seed=42, poisson_lambda=0.0)
+        env.reset(generate_initial_calls=False)
+
+        amb = env.ambulances[1]
+        amb.current_edge = (1, 18)
+        amb.distance_from_start = 0.5
+        amb.status = AmbulanceStatus.AT_SCENE
+        amb.current_call_id = 30
+        amb.scene_time_remaining = 0.5
+
+        call = EmergencyCall(
+            30, (1, 18), 0.5, (0.0, 0.0), 1, 0.0,
+            status=CallStatus.AT_SCENE,
+            assigned_ambulance_id=1,
+            arrived_at_scene_time=0.0,
+        )
+        call.processing_time = 0.5
+        env.calls[30] = call
+
+        obs, reward, done, info = env.step()
+        self.assertEqual(call.status, CallStatus.COMPLETED)
+        self.assertEqual(env.served_calls_count, 1)
+        self.assertEqual(env.perfect_calls_count, 1)
+        self.assertAlmostEqual(
+            info["reward_breakdown"]["completion_bonus"],
+            REWARD_CONFIG[1]["perfect_reward"],
+            places=5,
+        )
+
+        obs, reward, done, info = env.step()
+        self.assertEqual(env.served_calls_count, 1)
+        self.assertEqual(env.perfect_calls_count, 1)
+        self.assertEqual(info["reward_breakdown"]["completion_bonus"], 0.0)
 
     def test_t0_failed_calls_penalized(self) -> None:
         """

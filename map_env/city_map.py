@@ -50,7 +50,7 @@ class CityMap:
         # Danh bạ các cung đường theo ID số nguyên: edge_id -> DirectedEdge
         self.edges_by_id: Dict[int, DirectedEdge] = {}
 
-        # Ánh xạ 2 chiều giữa khóa (u, v) và ID số nguyên (1..176)
+        # Ánh xạ 2 chiều giữa khóa (u, v) và ID số nguyên (1..172)
         self.edge_to_id: Dict[Tuple[int, int], int] = {}
         self.id_to_edge: Dict[int, Tuple[int, int]] = {}
 
@@ -337,7 +337,7 @@ class CityMap:
             self.adj[u].append(edge_uv)
             self.adj[v].append(edge_vu)
 
-        # Đánh số ID cố định duy nhất cho toàn bộ 176 cung đường có hướng (1..176)
+        # Đánh số ID cố định duy nhất cho toàn bộ 172 cung đường có hướng (1..172)
         for edge_id, (u, v) in enumerate(sorted(self.edges.keys()), start=1):
             edge = self.edges[(u, v)]
             edge.edge_id = edge_id
