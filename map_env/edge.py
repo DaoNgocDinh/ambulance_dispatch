@@ -48,6 +48,7 @@ CONGESTION_SPEEDS = SPEEDS_OUTER
 class DirectedEdge:
     """
     Biểu diễn cung đường có hướng từ from_node -> to_node.
+    - edge_id: Mã định danh số nguyên của cung đường (1..176).
     """
     from_node: int
     to_node: int
@@ -55,6 +56,12 @@ class DirectedEdge:
     congestion: int = CONGESTION_CLEAR # Độ tắc in {1, 2, 3}
     name: str = ""                     # Tên cung đường
     is_center: bool = False            # Tuyến đường thuộc vùng lõi trung tâm
+    edge_id: int = 0                   # Mã ID số nguyên duy nhất của cung đường
+
+    @property
+    def id(self) -> int:
+        """Bí danh cho edge_id."""
+        return self.edge_id
 
     @property
     def edge_key(self) -> tuple[int, int]:
