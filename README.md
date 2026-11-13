@@ -93,7 +93,7 @@ Toàn bộ các file trong dự án ([`run_simulation.py`](run_simulation.py), [
 ## 3. Không Gian Quan Sát (`Observation`), Slot, Hành Động Đồng Thời & Action Mask
 
 ### 3.1. Cấu Trúc Đầy Đủ Của `Observation` (`env.get_observation()`)
-Mỗi bước gọi `reset()` hoặc `step()` trả về dictionary `obs` bao gồm:
+Mỗi lần gọi `reset()` hoặc `step()` trả về dictionary `obs` bao gồm các khóa sau. Các list trong observation là snapshot tại thời điểm lấy; đặc biệt `route` của mỗi xe đã được copy nên observation cũ không bị thay đổi khi Environment tiếp tục `step()` (sửa trong M3, `dispatch_env/ambulance.py:130`):
 
 ```python
 obs = {
@@ -170,9 +170,11 @@ obs = {
         }, ...
     ],
     "pending_call_count": 1,
-    "served_calls": [...],
-    "failed_calls": [...],
-    "perfect_calls": [...],
+    "served_calls": 12,                # int: số cuộc gọi đã hoàn thành sơ cứu
+    "failed_calls": 3,                 # int: số cuộc gọi thất bại/bị từ chối
+    "perfect_calls": 5,                # int: số cuộc gọi hoàn thành hoàn hảo
+    "total_reward": 245.75,            # float: reward tích lũy của episode
+    "last_step_reward": 4.25,          # float: reward của bước gần nhất
 }
 ```
 
@@ -187,12 +189,18 @@ obs = {
 - **`env.decode_action(action)`**: Giải mã `action_id` (hoặc cặp slot) sang danh sách các cặp phân công đồng thời thực tế `[(amb_id, call_id), ...]`.
 - **`env.encode_action([(amb_id, call_id), ...])`**: Mã hóa ngược từ tập cặp phân công sang `action_id`.
 
+**Hợp đồng invalid action hiện tại (M3 xác nhận, chưa phải quyết định cuối cùng):**
+- `action_id` ngoài khoảng `[0, num_potential_actions - 1]` được giải mã thành `[]` (no-op).
+- `action_id` trong khoảng nhưng có `action_mask[id] == False` vẫn được giải mã từng cặp; cặp không hợp lệ bị lọc bỏ, các cặp còn lại có thể được thực thi (**partial execution**).
+- `step()` **không enforce** action mask và **không raise lỗi** cho các hành động trên. Trong thí nghiệm RL nên luôn dùng action mask; hợp đồng strict/no-op/partial vẫn là quyết định còn mở.
+
 ### 3.4. Đa Dạng Giữa Các Episode Khi Gọi `env.reset()`
 - Khi huấn luyện qua nhiều episode liên tiếp bằng cách gọi `obs = env.reset()` (không truyền `seed`), bộ sinh số ngẫu nhiên của môi trường tự động tiến lên để tạo mới hoàn toàn:
   1. Phân bố độ tắc đường ban đầu trên toàn bộ $172$ cung đường (`city_map.reset_traffic()`),
   2. Vị trí xuất phát ngẫu nhiên (cung đường và khoảng cách) của tất cả các xe cứu thương,
   3. Chuỗi cuộc gọi cấp cứu phát sinh tại $t = 0$ và trong suốt episode.
 - Nếu cần tái lập chính xác một kịch bản cố định để kiểm thử, truyền `env.reset(seed=42)`.
+- Lưu ý: `reset(seed=...)` reset cả `env.rng` và traffic map; `reset()` không seed **sau episode đầu** mới lấy seed traffic mới từ `env.rng`. Episode đầu tiên ngay sau khi khởi tạo không gọi `reset_traffic()` mà giữ trạng thái traffic hiện có của `CityMap`. Có hai bộ sinh độc lập: `env.rng` và `city_map.rng`.
 
 ---
 
@@ -200,9 +208,9 @@ obs = {
 
 | Mức độ | Đợi (điểm trừ/ phút) ($w_c$) | Thất bại/ Quá hạn ($p_c$) | Mỗi km đi (điểm trừ/ km) | Hoàn thành ($b_c$) | Hoàn hảo ($b_c$) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1** | $1.0$ | $30$ | $0.05$ | $50$ | $70$ |
-| **2** | $2.0$ | $60$ | $0.05$ | $65$ | $80$ |
-| **3** | $4.0$ | $120$ | $0.05$ | $70$ | $100$ |
+| **1** | $0.5$ | $30$ | $0.05$ | $50$ | $70$ |
+| **2** | $1.0$ | $60$ | $0.05$ | $65$ | $80$ |
+| **3** | $1.5$ | $120$ | $0.05$ | $70$ | $100$ |
 
 Tại mỗi bước thời gian $t$:
 
@@ -210,42 +218,47 @@ $$r_t = -\sum_c w_c \Delta W_{c,t} - \sum_{c \in F_t} p_c - 0.05 \sum_i \Delta d
 
 Trong đó:
 - $\Delta W_{c,t}$: Thời gian cuộc gọi $c$ thực sự chờ trong bước (phút).
-- $w_c$: Trọng số phạt chờ theo mức độ ($1.0, 2.0, 4.0$).
+- $w_c$: Trọng số phạt chờ theo mức độ ($0.5, 1.0, 1.5$).
 - $F_t$: Tập cuộc gọi vừa thất bại hoặc bị từ chối trong bước. **Lưu ý: Tại $t = 0$, nếu cuộc gọi sinh ra vượt quá giới hạn 3 cuộc gọi PENDING và bị từ chối ngay lập tức, các cuộc gọi thất bại này vẫn bị trừ điểm phạt $p_c$ ngay tại $t = 0$ như thường** (ghi nhận trong `total_reward`, `last_step_reward` và file log Phút thứ 0).
 - $p_c$: Mức phạt thất bại theo mức độ ($30, 60, 120$).
 - $\Delta d_{i,t}$: Quãng đường xe $i$ di chuyển trong bước (km).
 - $C_t$: Tập cuộc gọi vừa hoàn thành trong bước.
-- $b_c$: Điểm thưởng hoàn thành thường hoặc hoàn hảo theo mức độ.
+- $b_c$: Điểm thưởng hoàn thành thường hoặc hoàn hảo theo mức độ. Điểm hoàn hảo **thay thế** điểm hoàn thành thường, không cộng thêm.
+
+**Lưu ý về $t = 0$:** Nếu `reset()` từ chối cuộc gọi do đầy hàng chờ, penalty được cộng vào `last_step_reward` và `total_reward` nhưng **không được trả về** qua `reset()`; `step()` đầu tiên xóa `calls_failed_this_step`. Vì vậy vòng huấn luyện chỉ cộng reward từ `step()` sẽ bỏ sót khoản penalty này. Đây là hạn chế đã biết, cần nhóm quyết định cách hạch toán.
 
 ---
 
 ## 5. Hướng Dẫn Chạy Thử Nghiệm & Kiểm Thử
 
 ### 5.1. Chạy Mô Phỏng Toàn Diện (`run_simulation.py`)
+> **Lưu ý quan trọng:** `run_simulation.py` gọi `env.step(auto_dispatch=True)`, tức sử dụng **heuristic baseline** có sẵn trong môi trường (ưu tiên cuộc gọi mức độ nghiêm trọng cao hơn, sau đó chọn xe có ETA đến hiện trường ngắn nhất). Đây **không phải RL Agent** và không phải quá trình huấn luyện/đánh giá học tăng cường. Repository hiện chưa có entry point huấn luyện hoặc đánh giá RL hoàn chỉnh; chỉ có môi trường MDP và heuristic baseline này.
+
 Chạy với bộ tham số mặc định (`num_ambulances = 6`, `poisson_lambda = 0.1`, `max_time = 360`, `max_overtime = 300`, `max_pending_calls = 3`, `seed = 42`):
 ```powershell
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py
+python run_simulation.py
 ```
 
 Tùy biến các tham số trực tiếp từ dòng lệnh:
 ```powershell
 # Chạy với 4 xe cứu thương và lambda = 0.2:
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py --ambulances 4 --poisson 0.2
+python run_simulation.py --ambulances 4 --poisson 0.2
 
 # Tùy chỉnh đầy đủ các tham số:
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" run_simulation.py --ambulances 6 --poisson 0.1 --max_time 360 --max_overtime 300 --max_pending 3 --seed 42 --log simulation.log
+python run_simulation.py --ambulances 6 --poisson 0.1 --max_time 360 --max_overtime 300 --max_pending 3 --seed 42 --log simulation.log
 ```
 
-### 5.2. Chạy Toàn Bộ 34 Unit Tests Kiểm Thử
+### 5.2. Chạy Toàn Bộ 37 Unit Tests Kiểm Thử
 ```powershell
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" -m unittest discover -s tests -v
+python -m unittest discover -s tests -v
 ```
+
+Kết quả lần chạy gần nhất trong M3: **37/37 test đạt** (xem `M3_IMPLEMENTATION_REPORT.md`). M4 chỉ cập nhật tài liệu, không chạy lại test suite.
 
 ### 5.3. Vẽ Bản Đồ Mạng Lưới 80 Nút & 4 Bệnh Viện
 ```powershell
-& "C:\Users\ADMIN\AppData\Local\Python\bin\python.exe" visualize_map.py
+python visualize_map.py
 ```
-
 
 ### 5.4. Khởi Chạy Giao Diện Trực Quan Hóa & Điều Phối (Web & Desktop GUI)
 Hệ thống cung cấp 2 giải pháp giao diện tương tác trực quan thời gian thực:
@@ -272,11 +285,24 @@ Hệ thống cung cấp 2 giải pháp giao diện tương tác trực quan th�
    python gui_app.py
    ```
 
-## Q-learning: lõi độc lập và adapter môi trường
+### 5.5. Q-learning: Lõi Độc Lập và Adapter Môi Trường
 - `q_learning.py` chỉ chứa thuật toán bảng: epsilon-greedy, cập nhật Bellman, giảm epsilon và lưu/đọc Q-table. Lõi nhận state key dạng chuỗi và action ID hợp lệ; không import hay đọc dữ liệu môi trường.
 - `ambulance_q_learning_adapter.py` chuyển trạng thái, action mask và lệnh step của môi trường cứu thương sang giao diện mà lõi sử dụng. Nếu API hoặc cách biểu diễn trạng thái của môi trường đổi, phần tích hợp cần cập nhật ở adapter; môi trường của nhóm không bị sửa.
 - `train_q_learning.py` ghép lõi với adapter để huấn luyện và đánh giá trên mô phỏng hiện tại.
 
-Adapter gắn fingerprint cấu hình vào state key, gồm bản đồ, bệnh viện, action space, số xe/slot, thời gian mô phỏng, Poisson và cấu hình reward/tốc độ. Q-table đã học trên cấu hình khác sẽ không áp nhầm vào state mới. Fingerprint không tự xây lại bản đồ và không đảm bảo chính sách cũ phù hợp; sau khi đổi cấu hình nên huấn luyện và đánh giá lại. Chạy bằng `python train_q_learning.py --episodes 50 --evaluation-episodes 10 --poisson 0.1`.
+Adapter gắn fingerprint cấu hình vào state key, gồm bản đồ, bệnh viện, action space, số xe/slot, thời gian mô phỏng, Poisson và cấu hình reward/tốc độ. Q-table đã học trên cấu hình khác sẽ không áp nhầm vào state mới. Fingerprint không tự xây lại bản đồ và không đảm bảo chính sách cũ phù hợp; sau khi đổi cấu hình nên huấn luyện và đánh giá lại. Chạy bằng `python train_q_learning.py --episodes 200 --evaluation-episodes 10 --poisson 0.1`.
 
-Trong lúc chạy, terminal in một dòng tiến độ sau mỗi episode, gồm reward, số cuộc gọi hoàn thành/thất bại, epsilon và ước tính thời gian còn lại. Khi kết thúc, phần `TỔNG KẾT ĐÁNH GIÁ` so sánh Q-learning với Auto-dispatch. Các tệp chi tiết được lưu trong `results/q_learning`: biểu đồ PNG, bảng chỉ số CSV, log episode mẫu và Q-table JSON.
+Trong lúc chạy, terminal in một dòng tiến độ sau mỗi episode, gồm reward, số cuộc gọi hoàn thành/thất bại, epsilon và ước tính thời gian còn lại. Khi kết thúc, phần `TỔNG KẾT ĐÁNH GIÁ` so sánh Q-learning với Auto-dispatch. Các tệp chi tiết được lưu trong `results/q_learning_final_v2`: biểu đồ PNG, bảng chỉ số CSV, log episode mẫu và Q-table JSON.
+
+---
+
+## 6. Giới Hạn Đã Biết & Quyết Định Còn Mở
+
+Các điểm dưới đây là hành vi hiện tại của Environment, không phải cam kết cuối cùng cho giao diện RL:
+
+- **Invalid action:** no-op ngoài range, partial decode/execute khi mask `False`, `step()` không enforce mask và không raise. Cần chốt strict raise / no-op / partial.
+- **Penalty tại $t=0$:** có thể phát sinh trong `reset()` nhưng không được trả qua `reset()`; vòng huấn luyện chỉ cộng reward từ `step()` sẽ bỏ sót. Cần chốt cách hạch toán.
+- **Markov sufficiency:** observation chưa chứng minh là sufficient statistic; thiếu `next_call_id`, không chứa toàn bộ cấu hình tĩnh. Raw `call_id`/ambulance ID nên được coi là identifier, không mặc định là policy feature.
+- **Completion KPI:** `COMPLETED` nghĩa là đã xong sơ cứu tại hiện trường, **trước** khi bàn giao tại bệnh viện.
+- **API RL:** chưa có Gymnasium `action_space`/`observation_space`, chưa tách `terminated`/`truncated`, chưa có RL Agent hoặc pipeline huấn luyện/đánh giá.
+- **Hiệu chuẩn:** các tham số nhu cầu, giao thông, xử lý và bệnh viện là giả định mô phỏng; chưa hiệu chuẩn bằng dữ liệu thực.

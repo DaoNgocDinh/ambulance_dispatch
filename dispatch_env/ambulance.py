@@ -17,7 +17,7 @@ from map_env.city_map import CityMap
 class Ambulance:
     """
     Thực thể Xe cứu thương.
-    - ambulance_id: Mã định danh xe (1, 2, 3, 4).
+    - ambulance_id: Mã định danh xe (1..num_ambulances, mặc định 1..6).
     - current_edge: Cung đường có hướng hiện tại (u, v).
     - distance_from_start: Vị trí hiện tại trên cung đường tính từ điểm đi u (km).
     - status: Trạng thái xe (Rảnh, Đang đến cuộc gọi, Xử lý tại cuộc gọi, Đang tới bệnh viện, Xử lý tại bệnh viện).
@@ -127,7 +127,7 @@ class Ambulance:
             "hospital_handover_time": handover_time,
             "scene_time_remaining": round(self.scene_time_remaining, 2),
             "hospital_time_remaining": round(self.hospital_time_remaining, 2),
-            "route": self.route_edges,
+            "route": list(self.route_edges),
             "route_edge_ids": [city_map.edge_to_id.get(e, 0) for e in self.route_edges],
             "total_distance_traveled": round(self.total_distance_traveled, 2),
         }
