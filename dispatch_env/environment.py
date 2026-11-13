@@ -124,7 +124,7 @@ class AmbulanceDispatchEnv:
         - Nếu truyền seed != None: đặt lại toàn bộ bộ sinh số ngẫu nhiên theo seed đó (tái lập kết quả).
         - Nếu seed == None (chạy qua nhiều episode liên tiếp):
           + Luồng sinh số ngẫu nhiên (self.rng và self.city_map.rng) tiếp tục tiến lên tự nhiên.
-          + Tái khởi tạo ngẫu nhiên độ tắc đường ban đầu trên toàn bộ 176 cung đường (reset_traffic).
+          + Tái khởi tạo ngẫu nhiên độ tắc đường ban đầu trên toàn bộ 172 cung đường có hướng (reset_traffic).
           + Sinh mới ngẫu nhiên vị trí ban đầu (cung đường & khoảng cách) cho tất cả các xe cứu thương.
           + Sinh mới ngẫu nhiên danh sách cuộc gọi ban đầu tại t=0 (và chuỗi cuộc gọi Poisson trong suốt episode).
           => Đảm bảo mỗi episode có kịch bản giao thông, vị trí xe và cuộc gọi hoàn toàn đa dạng, khác nhau.
@@ -165,11 +165,11 @@ class AmbulanceDispatchEnv:
         }
         self.is_truncated = False
 
-        # Khởi tạo 4 xe cứu thương tại vị trí ngẫu nhiên trên các cung đường
+        # Khởi tạo num_ambulances xe cứu thương tại vị trí ngẫu nhiên trên các cung đường
         all_edges = list(self.city_map.edges.keys())
         self.ambulances.clear()
 
-        # Chọn 4 cung đường ngẫu nhiên riêng biệt cho 4 xe
+        # Chọn num_ambulances cung đường ngẫu nhiên riêng biệt cho từng xe
         chosen_indices = self.rng.choice(len(all_edges), size=self.num_ambulances, replace=False)
         for amb_id in range(1, self.num_ambulances + 1):
             edge_key = all_edges[chosen_indices[amb_id - 1]]
@@ -262,15 +262,20 @@ class AmbulanceDispatchEnv:
     def _build_potential_actions(self) -> List[Tuple[Tuple[int, int], ...]]:
         """
         Tạo tất cả các cách ghép hành động tiềm năng (joint slot assignments) giữa
-        N xe cứu thương (1..N) và M slot cuộc gọi (0..M-1), bao gồm cả không phân công ().
+        N = num_ambulances xe cứu thương (1..N) và M = max_pending_calls slot cuộc gọi (0..M-1),
+        bao gồm cả không phân công ().
         - Mỗi xe nhận tối đa 1 slot, mỗi slot giao tối đa cho 1 xe.
         - Các cặp (amb_id, slot_idx) trong mỗi hành động được sắp xếp tăng dần theo amb_id.
-        - Với 4 xe và 3 slot:
+        - Số action tiềm năng phụ thuộc cấu hình (N, M):
+          |A_potential| = sum_{k=0}^{min(N, M)} C(N, k) * P(M, k)
+                        = sum_{k=0}^{min(N, M)} C(N, k) * C(M, k) * k!
+        - Với cấu hình mặc định N = 6 xe, M = 3 slot:
           + k = 0 (không phân công): 1 cách -> ()
-          + k = 1 (phân công 1 xe): C(4,1) * P(3,1) = 12 cách
-          + k = 2 (phân công đồng thời 2 xe): C(4,2) * P(3,2) = 36 cách
-          + k = 3 (phân công đồng thời 3 xe): C(4,3) * P(3,3) = 24 cách
-          => Tổng cộng = 73 cách ghép hành động tiềm năng.
+          + k = 1 (phân công 1 xe): C(6,1) * P(3,1) = 18 cách
+          + k = 2 (phân công đồng thời 2 xe): C(6,2) * P(3,2) = 90 cách
+          + k = 3 (phân công đồng thời 3 xe): C(6,3) * P(3,3) = 120 cách
+          => Tổng cộng = 229 cách ghép hành động tiềm năng.
+        - Với N = 4 xe, M = 3 slot: tổng cộng = 1 + 12 + 36 + 24 = 73 cách.
         """
         amb_ids = list(range(1, self.num_ambulances + 1))
         slot_indices = list(range(self.max_pending_calls))
@@ -286,7 +291,8 @@ class AmbulanceDispatchEnv:
 
     def get_action_mask(self) -> np.ndarray:
         """
-        Xây dựng Action Mask (mảng boolean kích thước 73) để kiểm tra tính hợp lệ
+        Xây dựng Action Mask (mảng boolean kích thước self.num_potential_actions,
+        tức 229 với cấu hình mặc định 6 xe / 3 slot) để kiểm tra tính hợp lệ
         của từng cách ghép hành động tiềm năng trong trạng thái hiện tại S_t:
         - Action 0 (không phân công) luôn hợp lệ (mask[0] = True).
         - Một hành động ghép ((amb_1, slot_1), (amb_2, slot_2), ...) hợp lệ (True) khi và chỉ khi:
@@ -322,7 +328,7 @@ class AmbulanceDispatchEnv:
     ) -> bool:
         """
         Kiểm tra tính hợp lệ của một hành động cụ thể ở trạng thái hiện tại:
-        - Nếu action là int (action_id trong [0, 72]): kiểm tra trực tiếp qua get_action_mask()[action].
+        - Nếu action là int (action_id trong [0, num_potential_actions - 1]): kiểm tra trực tiếp qua get_action_mask()[action].
         - Nếu action là tập các cặp (amb_id, slot_idx) với from_slots=True: kiểm tra qua slot.
         - Nếu action là tập các cặp (amb_id, call_id) (như [(1, 10), (3, 12)]):
           kiểm tra không trùng xe, không trùng cuộc gọi, mọi xe đều IDLE và mọi cuộc gọi đều PENDING.
@@ -380,13 +386,19 @@ class AmbulanceDispatchEnv:
         dưới dạng [(amb_id, call_id), ...] (ví dụ [(1, 10), (3, 12)] nghĩa là Xe 1 nhận cuộc gọi 10,
         Xe 3 nhận cuộc gọi 12):
         - Nếu action là None: trả về [] (không phân công).
-        - Nếu action là int (chỉ số action_id trong [0, 72] của self.potential_actions):
+        - Nếu action là int (chỉ số action_id trong [0, num_potential_actions - 1] của self.potential_actions):
           Lấy cách ghép theo slot self.potential_actions[action_id] = ((amb_id, slot_idx), ...),
           ánh xạ từng slot_idx sang call_id thực tế trong get_call_slots() và lọc các cặp hợp lệ.
         - Nếu action là tập các cặp (amb_id, slot_idx) với from_slots=True:
           Ánh xạ slot_idx -> call_id và lọc các cặp hợp lệ 1-1.
         - Nếu action là tập các cặp (amb_id, call_id) (ví dụ [(1, 10), (3, 12)] hoặc (1, 10)):
           Kiểm tra và lọc các cặp hợp lệ 1-1 (xe IDLE, cuộc gọi PENDING).
+
+        Invalid action contract hiện tại:
+        - Action ID ngoài [0, num_potential_actions - 1] trả về [] (no-op).
+        - Action ID trong range nhưng mask False vẫn được giải mã theo từng cặp;
+          các cặp không hợp lệ bị bỏ qua, các cặp còn lại có thể được thực thi (partial decode).
+        - Hàm không raise lỗi cho các dạng action trên.
         """
         if action is None:
             return []
@@ -447,7 +459,7 @@ class AmbulanceDispatchEnv:
     ) -> int:
         """
         Mã hóa một tập các cặp phân công đồng thời [(amb_id, call_id), ...]
-        sang chỉ số hành động tiềm năng action_id trong [0, 72] dựa trên vị trí Slot hiện tại.
+        sang chỉ số hành động tiềm năng action_id trong [0, num_potential_actions - 1] dựa trên vị trí Slot hiện tại.
         Nếu không phân công hoặc không khớp slot hợp lệ, trả về 0 (hành động không phân công).
         """
         if not dispatch_pairs:
@@ -499,7 +511,11 @@ class AmbulanceDispatchEnv:
         return [self.decode_action(act_id) for act_id in self.get_valid_action_ids()]
 
     def get_observation(self) -> Dict[str, Any]:
-        """Quan sát trạng thái hiện tại S_t của môi trường (kèm thông tin Slot, Edge ID và Action Mask)."""
+        """
+        Quan sát trạng thái hiện tại S_t của môi trường (kèm thông tin Slot, Edge ID và Action Mask).
+        Các list trong observation là snapshot độc lập; route của ambulance được copy để
+        observation cũ không bị thay đổi khi Environment tiếp tục step().
+        """
         amb_obs = {
             aid: amb.to_dict(self.city_map)
             for aid, amb in self.ambulances.items()
@@ -521,7 +537,7 @@ class AmbulanceDispatchEnv:
             for c in self.active_calls
         ]
 
-        # Tình trạng tắc đường trên từng cung đường có hướng (u -> v) và theo edge_id (1..176)
+        # Tình trạng tắc đường trên từng cung đường có hướng (u -> v) và theo edge_id (1..num_directed_edges)
         edge_congestion: Dict[Tuple[int, int], int] = {}
         edge_congestion_by_id: Dict[int, int] = {}
         edge_obs: Dict[Tuple[int, int], Dict[str, Any]] = {}
@@ -668,11 +684,13 @@ class AmbulanceDispatchEnv:
         
         Quy trình chuẩn theo yêu cầu:
         1. Quan sát trạng thái S_t và sắp xếp các cuộc gọi PENDING vào Slot (0, 1, 2).
-        2. Xây dựng Action Mask kiểm tra tính hợp lệ trên tập 73 cách ghép hành động tiềm năng.
+        2. Xây dựng Action Mask kiểm tra tính hợp lệ trên tập num_potential_actions cách ghép hành động tiềm năng.
         3. Agent chọn hành động A_t:
-           - Có thể là chỉ số action_id \in [0, 72] (tương ứng cách ghép slot tiềm năng),
+           - Có thể là chỉ số action_id \in [0, num_potential_actions - 1] (tương ứng cách ghép slot tiềm năng),
            - Hoặc tập các cặp phân công đồng thời [(1, 10), (3, 12)] (Xe 1 nhận cuộc gọi ID 10, Xe 3 nhận ID 12).
         4. Giải mã hành động (decode_action) và thực hiện phân công đồng thời cho các xe nhận nhiệm vụ.
+           Lưu ý: step() không enforce action mask và không raise lỗi invalid action; các cặp
+           không hợp lệ bị lọc bỏ, có thể dẫn tới partial execution (xem decode_action).
         5. Trong khoảng [t, t+1):
            - Các xe di chuyển theo tuyến hiện tại (di chuyển liên tục sub-minute).
            - Xử lý sự kiện đến hiện trường, chăm sóc sơ cứu, đến BV và bàn giao.
@@ -701,7 +719,7 @@ class AmbulanceDispatchEnv:
         # --------------------------------------------------------------------
         valid_dispatch_pairs: List[Tuple[int, int]] = []
         if action is not None:
-            # Giải mã hành động (hỗ trợ cả action_id nguyên [0..72], cặp slot, hoặc tập cặp [(amb_id, call_id), ...])
+            # Giải mã hành động (hỗ trợ cả action_id nguyên [0..num_potential_actions-1], cặp slot, hoặc tập cặp [(amb_id, call_id), ...])
             valid_dispatch_pairs = self.decode_action(action, from_slots=from_slots)
         elif auto_dispatch:
             # Chọn tập các cặp phân công đồng thời tối ưu (ưu tiên mức độ nghiêm trọng cao & chờ lâu)

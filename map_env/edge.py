@@ -48,7 +48,7 @@ CONGESTION_SPEEDS = SPEEDS_OUTER
 class DirectedEdge:
     """
     Biểu diễn cung đường có hướng từ from_node -> to_node.
-    - edge_id: Mã định danh số nguyên của cung đường (1..176).
+    - edge_id: Mã định danh số nguyên của cung đường (1..172).
     """
     from_node: int
     to_node: int

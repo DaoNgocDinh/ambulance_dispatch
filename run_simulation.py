@@ -1,5 +1,11 @@
 """
 Script Chạy Thử Nghiệm Mô Phỏng Điều Phối Xe Cứu Thương và Xuất File Log.
+
+LƯU Ý: Script này chạy **heuristic baseline** (`env.step(auto_dispatch=True)`:
+ưu tiên mức độ nghiêm trọng cao hơn, sau đó chọn xe có ETA ngắn nhất), KHÔNG phải
+RL Agent và không huấn luyện học tăng cường. Repository hiện chưa có entry point
+huấn luyện/đánh giá RL hoàn chỉnh.
+
 Thực hiện mô phỏng toàn diện theo đúng cấu hình chuẩn:
 1. 6 xe cứu thương (mặc định), vị trí ban đầu ngẫu nhiên, ban đầu luôn Rảnh (IDLE).
 2. Cuộc gọi cấp cứu phát sinh theo Poisson (lambda = 0.1), tối đa 3 cuộc gọi PENDING.

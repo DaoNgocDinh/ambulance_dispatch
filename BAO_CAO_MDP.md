@@ -1,8 +1,10 @@
 # BÁO CÁO MÔ HÌNH MDP CHO BÀI TOÁN ĐIỀU PHỐI XE CỨU THƯƠNG
 
-**Phiên bản:** 1.0 — đối chiếu với mã nguồn trong workspace ngày 30/10/2026  
-**Phạm vi:** mô phỏng điều phối tập trung trên bản đồ đô thị tổng hợp.  
-**Tình trạng:** đặc tả nghiên cứu dựa trên code hiện có; các khác biệt và lỗi đã nhận diện được ghi tại Mục 10. Báo cáo này không khẳng định mô phỏng đã được hiệu chuẩn bằng dữ liệu thực.
+**Phiên bản:** 1.1 — đồng bộ với mã nguồn và kết quả M3 ngày 11/11/2026
+
+**Phạm vi:** mô phỏng điều phối tập trung trên bản đồ đô thị tổng hợp. Báo cáo mô tả **Environment hiện có**, không mô tả một RL Agent hoặc pipeline huấn luyện đã triển khai.
+
+**Tình trạng:** đặc tả nghiên cứu dựa trên code hiện có; các khác biệt, giới hạn và quyết định còn mở được ghi tại Mục 10. Báo cáo này không khẳng định mô phỏng đã được hiệu chuẩn bằng dữ liệu thực.
 
 ## 1. Phát biểu bài toán
 
@@ -106,7 +108,7 @@ Với mỗi xe \(i\), trạng thái mục tiêu cần chứa hoặc cho phép su
 | `hospital_time_remaining` | thời gian bàn giao còn lại, phút | quyết định khi nào xe rảnh |
 | `assigned_hospital_id` | bệnh viện đã chọn | xác định đích và thời gian bàn giao |
 
-`get_observation()` hiện đã trả vị trí, trạng thái, ID cuộc gọi, tuyến và một số thông tin tốc độ; nhưng chưa trả đầy đủ thời gian sơ cứu/bàn giao còn lại và các trường đích ở trên. Danh sách tuyến hiện được trả trực tiếp từ object xe, nên observation cũ có thể bị thay đổi khi tuyến nội bộ thay đổi. Xem `dispatch_env/environment.py:get_observation` và `dispatch_env/ambulance.py:Ambulance`.
+`get_observation()` trả các trường trên qua `Ambulance.to_dict()`: vị trí, trạng thái, ID cuộc gọi, `target_type`/`target_id`/`target_edge`/`target_dist`, `assigned_hospital_id`, `hospital_handover_time`, `scene_time_remaining`, `hospital_time_remaining`, `route` và `route_edge_ids`. Từ M3, `route` được trả bằng **bản copy** (`list(self.route_edges)`), nên observation cũ không bị thay đổi khi tuyến nội bộ thay đổi. Observation vẫn chưa chứng minh đủ Markov vì còn thiếu `next_call_id` và một số cấu hình tĩnh; xem Mục 3.4. Nguồn: `dispatch_env/environment.py:get_observation`, `dispatch_env/ambulance.py:96-133`.
 
 ### 3.4. Cuộc gọi
 
@@ -279,7 +281,7 @@ Phạt quãng đường là 0,05 điểm/km. Điểm hoàn hảo trong bảng l�
 
 **Khác biệt với bảng người dùng từng đề xuất:** phạt chờ `1/2/4`, thưởng hoàn thành `80` và hoàn hảo `100` cho mọi mức. Đó là một cấu hình đề xuất khác, **chưa phải giá trị code đang chạy**. Nếu chọn áp dụng, cần đổi code, test, README và ghi lại phiên bản thí nghiệm.
 
-Trong điều kiện thông thường, các cuộc gọi bị từ chối tại cuối bước được ghi vào phạt thất bại. Tuy nhiên, những sai lệch tại \(t=0\) và deadline được mô tả tại Mục 10; vì vậy không được coi công thức lý tưởng tự động mô tả chính xác mọi tình huống hiện tại.
+Trong điều kiện thông thường, các cuộc gọi bị từ chối tại cuối bước được ghi vào phạt thất bại. Riêng khoản penalty phát sinh tại \(t=0\) trong `reset()` không được trả qua API `reset()`; hạn chế này được mô tả tại Mục 10.3.
 
 ### 6.2. Log
 
@@ -290,7 +292,8 @@ Mỗi bước hiện ghi reward, các thành phần phạt chờ, thất bại, 
 Ở cấu hình mặc định, khi bắt đầu episode:
 
 - Thời gian mô phỏng và đồng hồ giao thông về 0; thống kê và reward được xóa.
-- Giao thông ban đầu được lấy mẫu với xác suất mức 1/2/3 tương ứng `0,60/0,30/0,10` theo quy tắc hiện tại của `CityMap`.
+- `reset(seed=...)` đặt lại cả `env.rng` và traffic map; `reset()` không seed **sau episode đầu** lấy seed traffic mới từ `env.rng`. Episode đầu tiên ngay sau khi khởi tạo không gọi `reset_traffic()` mà giữ traffic hiện có của `CityMap`. Có hai bộ sinh độc lập: `env.rng` và `city_map.rng`.
+- Khi traffic được khởi tạo lại, mức ban đầu 1/2/3 có xác suất `0,60/0,30/0,10` theo quy tắc hiện tại của `CityMap`.
 - Xe ban đầu rảnh; các cung khởi đầu được lấy mẫu không lặp, sau đó lấy vị trí trên cung theo code và làm tròn 0,01 km.
 - Có thể sinh các cuộc gọi đầu tiên ngay tại \(t=0\).
 - Bản đồ truyền vào được giữ về cấu trúc; `reset_traffic` có thể thay đổi mức tắc ban đầu theo quy tắc của môi trường.
@@ -331,7 +334,7 @@ Chưa có bằng chứng trong dự án cho thấy các tham số đã được 
 
 ### 9.2. Kiểm thử đã chạy
 
-Lệnh kiểm tra ngày 30/10/2026: `python -m unittest discover -s tests -v` với trình thông dịch Python cài trên máy và `PYTHONDONTWRITEBYTECODE=1`. Kết quả: **31/31 test đạt**. Điều này xác nhận các test hiện có vượt qua, không chứng minh mọi trường hợp biên hay sự phù hợp dữ liệu thực. Cần bổ sung test cho các mục tại Mục 10.
+Lần chạy gần nhất trong M3: `python -m unittest discover -s tests -v` với `PYTHONDONTWRITEBYTECODE=1`. Kết quả: **37/37 test đạt** (xem `M3_IMPLEMENTATION_REPORT.md`). Ba test M3 bổ sung kiểm tra route snapshot, invalid action contract và completion reward chỉ cộng một lần. Điều này xác nhận các test hiện có vượt qua, không chứng minh mọi trường hợp biên hay sự phù hợp dữ liệu thực. Cần bổ sung test cho các mục tại Mục 10.
 
 ### 9.3. Kế hoạch đánh giá chính sách
 
@@ -344,16 +347,16 @@ So sánh ít nhất một chính sách ngẫu nhiên hợp lệ và heuristic ư
 
 Khi so sánh, không chỉ dựa vào reward: trọng số reward là lựa chọn thiết kế và có thể không phản ánh đầy đủ mục tiêu nghiệp vụ.
 
-## 10. Những điểm cần sửa hoặc quyết định trước khi tuyên bố môi trường hoàn thiện
+## 10. Giới hạn, quyết định còn mở và điểm cần kiểm chứng
 
-1. **Bảng reward chưa khớp bảng người dùng đề xuất.** Cần chốt bảng nào là chuẩn và cập nhật code, test, tài liệu đồng bộ.
-2. **Quan sát chưa chứng minh đủ Markov.** Cần bổ sung/kiểm chứng thời gian sơ cứu, bàn giao, đích và các biến liên quan; sao chép tuyến đường khi tạo snapshot; kiểm tra ID tăng dần và các cờ sự kiện.
-3. **Thất bại ở \(t=0\).** `reset()` có thể từ chối cuộc gọi do đầy hàng chờ, nhưng reward ban đầu vẫn 0 và danh sách sự kiện có thể bị xóa trước khi tính bước đầu. Cần chốt cách hạch toán và kiểm thử.
-4. **Deadline và thời gian chờ.** Đến đúng deadline được cho là thành công; kiểm tra thất bại chỉ khi đã vượt deadline có thể làm tính thêm một phút chờ. Trường hợp xe dự kiến đến muộn có nhánh di chuyển đến đích trước khi hủy. Cần đặc tả thời điểm timeout và test đến trước/đúng/sau deadline, quãng đường và reward.
-5. **Hành động sai.** Code hiện lọc cặp không hợp lệ thay vì luôn báo lỗi; cần chốt hợp đồng cho agent, đồng bộ action mask và test.
-6. **API và thí nghiệm.** Chưa có Gymnasium spaces chuẩn, chương trình huấn luyện hoặc đánh giá baseline nhiều seed được xác nhận trong dự án. Cần triển khai nếu muốn tích hợp thư viện RL.
-7. **Thiếu dữ liệu hiệu chuẩn.** Các giả định về nhu cầu, giao thông, xử lý và bệnh viện cần dữ liệu nguồn và quy trình đánh giá trước khi dùng cho kết luận ứng dụng thực tế.
-8. **Số cung trong README khác runtime.** README ghi 176 cung/88 tuyến; khi khởi tạo bản đồ mặc định, code thực tế có 172 cung/86 tuyến. Cần đối chiếu và cập nhật tài liệu hoặc cấu trúc bản đồ theo yêu cầu.
+1. **Bảng reward đang dùng.** Bảng tại Mục 6.1 là bảng chuẩn đang thực thi trong `dispatch_env/types.py:REWARD_CONFIG`; bảng đề xuất cũ `1/2/4`, hoàn thành `80`, hoàn hảo `100` **không được dùng** trong môi trường hiện tại. Nếu nhóm muốn đổi, phải sửa code, test và tài liệu trong cùng một thay đổi.
+2. **Quan sát chưa chứng minh đủ Markov.** Timer sơ cứu/bàn giao, target fields và route snapshot đã có trong observation; vẫn cần kiểm chứng `next_call_id`, cấu hình tĩnh, raw ID và các cờ sự kiện trước khi khẳng định đủ Markov.
+3. **Thất bại ở \(t=0\) [Limitation/Open decision].** `reset()` có thể từ chối cuộc gọi do đầy hàng chờ và cộng penalty vào `last_step_reward`/`total_reward`, nhưng `reset()` không trả reward. `step()` đầu tiên xóa `calls_failed_this_step`, nên vòng huấn luyện chỉ cộng reward từ `step()` sẽ bỏ sót khoản penalty này. Cần chốt cách hạch toán.
+4. **Deadline và thời gian chờ [Verified].** Đến đúng deadline là thành công; chỉ thất bại khi `current_time > deadline + 1e-6`. Cần giữ test cho đến trước/đúng/sau deadline, quãng đường và reward.
+5. **Hành động sai [Open decision].** `action_id` ngoài range là no-op; `action_id` trong range nhưng mask `False` có thể partial decode/execute; `step()` không enforce mask và không raise. Cần chốt strict raise / no-op toàn action / partial và đồng bộ action mask, test.
+6. **API và thí nghiệm [Open decision].** Chưa có Gymnasium spaces chuẩn, chương trình huấn luyện hoặc đánh giá baseline nhiều seed được xác nhận trong dự án. Cần triển khai nếu muốn tích hợp thư viện RL.
+7. **Thiếu dữ liệu hiệu chuẩn [Limitation].** Các giả định về nhu cầu, giao thông, xử lý và bệnh viện cần dữ liệu nguồn và quy trình đánh giá trước khi dùng cho kết luận ứng dụng thực tế.
+8. **Số cung đường [Verified].** README và runtime đã được đối chiếu: bản đồ mặc định có 80 nút, 86 tuyến hai chiều tương ứng 172 cung đường có hướng với `edge_id` từ 1 đến 172.
 
 ## 11. Tham chiếu mã nguồn
 
