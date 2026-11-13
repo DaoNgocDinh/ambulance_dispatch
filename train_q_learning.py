@@ -965,7 +965,14 @@ def main() -> None:
     """Đọc tùy chọn, huấn luyện, kiểm tra Correctness Gate, đánh giá và ghi kết quả."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--episodes", type=int, default=200, help="Số episode huấn luyện.")
-    parser.add_argument("--evaluation-episodes", type=int, default=10, help="Số seed đánh giá (Mục 5.3: 10).")
+    parser.add_argument(
+        "--evaluation-episodes",
+        "--eval-seeds",
+        dest="evaluation_episodes",
+        type=int,
+        default=10,
+        help="Số seed đánh giá (Mục 5.3: 10).",
+    )
     parser.add_argument("--max-time", type=int, default=DEFAULT_MAX_TIME)
     parser.add_argument("--max-overtime", type=int, default=DEFAULT_MAX_OVERTIME)
     parser.add_argument("--poisson", type=float, default=DEFAULT_POISSON_LAMBDA)

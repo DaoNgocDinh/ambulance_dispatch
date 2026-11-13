@@ -290,9 +290,10 @@ Hệ thống cung cấp 2 giải pháp giao diện tương tác trực quan th�
 - `ambulance_q_learning_adapter.py` chuyển trạng thái, action mask và lệnh step của môi trường cứu thương sang giao diện mà lõi sử dụng. Nếu API hoặc cách biểu diễn trạng thái của môi trường đổi, phần tích hợp cần cập nhật ở adapter; môi trường của nhóm không bị sửa.
 - `train_q_learning.py` ghép lõi với adapter để huấn luyện và đánh giá trên mô phỏng hiện tại.
 
-Adapter gắn fingerprint cấu hình vào state key, gồm bản đồ, bệnh viện, action space, số xe/slot, thời gian mô phỏng, Poisson và cấu hình reward/tốc độ. Q-table đã học trên cấu hình khác sẽ không áp nhầm vào state mới. Fingerprint không tự xây lại bản đồ và không đảm bảo chính sách cũ phù hợp; sau khi đổi cấu hình nên huấn luyện và đánh giá lại. Chạy bằng `python train_q_learning.py --episodes 200 --evaluation-episodes 10 --poisson 0.1`.
-
-Trong lúc chạy, terminal in một dòng tiến độ sau mỗi episode, gồm reward, số cuộc gọi hoàn thành/thất bại, epsilon và ước tính thời gian còn lại. Khi kết thúc, phần `TỔNG KẾT ĐÁNH GIÁ` so sánh Q-learning với Auto-dispatch. Các tệp chi tiết được lưu trong `results/q_learning_final_v2`: biểu đồ PNG, bảng chỉ số CSV, log episode mẫu và Q-table JSON.
+Chạy huấn luyện và đánh giá bằng:
+```powershell
+python train_q_learning.py --episodes 200 --eval-seeds 10 --eval-seed-offset 200000 --output-dir results/q_learning_final_v2
+```
 
 ---
 
