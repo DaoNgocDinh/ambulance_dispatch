@@ -14,6 +14,15 @@ Adapter giai quyet ca 2 viec:
     duoc sap xep DETERMINISTIC giong nhau o moi buoc -> _sorted_pending()
     sap theo (-severity, -wait_time, call_id), trung voi tieu chi uu tien
     cua che do auto_dispatch trong env.
+
+PHIEN BAN STATE v2 (STATE_VERSION = 2):
+State duoc bo sung NHOM 3 - thong tin KHOANG CACH toi ca o dau hang
+cho (slot 0 cua _sorted_pending): (ma xe ranh co ETA ngan nhat, bucket
+ETA). ETA tinh bang DUNG ham city_map.route_from_road_to_road ma che
+do auto_dispatch cua env dung de chon xe, nen agent va heuristic gio
+"nhin" cung mot dai luong khoang cach (du agent chi thay dang tho).
+Q-table train bang state v1 (khong co nhom 3) KHONG dung lai duoc:
+khoa state khac han, phai train lai tu dau.
 """
 
 from __future__ import annotations
@@ -24,6 +33,8 @@ from dispatch_env.types import AmbulanceStatus
 
 class GroupEnvAdapter:
     """Bo chuyen doi env cua nhom -> (state tuple, action int, reward, done)."""
+
+    STATE_VERSION = 2  # v2: state co them nhom khoang cach (nhom 3)
 
     def __init__(
         self,
@@ -84,13 +95,59 @@ class GroupEnvAdapter:
     # ------------------------------------------------------------------
     # 2. Roi rac hoa state: (trang thai 4 xe, thong tin 3 ca cho).
     # ------------------------------------------------------------------
+    # Nguong chia bucket ETA cho ca dau hang cho (phut): <8 gan,
+    # 8..18 vua, >18 xa. Chon theo deadline muc 3 (30 phut): ETA > 18
+    # cong thoi gian cho da tich luy thuong khien ca muc 3 rat kho kip.
+    ETA_BUCKET_EDGES = (8.0, 18.0)
+
+    def _top_call_distance_features(self, pending) -> tuple:
+        """Dac trung khoang cach cho ca o slot 0 (ca quan trong nhat).
+
+        Tra ve (nearest_amb_id, eta_bucket):
+        - nearest_amb_id: ma xe RANH co ETA toi ca dau hang ngan
+            nhat (0 neu khong co ca cho hoac khong co xe ranh).
+        - eta_bucket: 0 = khong ap dung, 1 = ETA < 8 phut,
+            2 = 8..18 phut, 3 = ETA > 18 phut.
+        ETA tinh bang route_from_road_to_road(by_travel_time=True) -
+        dung ham env dung trong auto_dispatch (dispatch_env), chi DOC
+        trang thai env, khong thay doi gi.
+        """
+        idle = [
+            self.env.ambulances[aid]
+            for aid in range(1, self.num_ambulances + 1)
+            if self.env.ambulances[aid].status == AmbulanceStatus.IDLE
+        ]
+        if not pending or not idle:
+            return (0, 0)
+        top = pending[0]
+        best_id, best_eta = 0, float("inf")
+        for amb in idle:
+            r = self.env.city_map.route_from_road_to_road(
+                start_edge=amb.current_edge,
+                start_dist=amb.distance_from_start,
+                dest_edge=top.edge,
+                dest_dist=top.distance_from_start,
+                by_travel_time=True,
+            )
+            eta = float(r["total_time_minutes"])
+            if eta < best_eta:
+                best_eta, best_id = eta, amb.ambulance_id
+        lo, hi = self.ETA_BUCKET_EDGES
+        bucket = 1 if best_eta < lo else (2 if best_eta <= hi else 3)
+        return (best_id, bucket)
+
     def discretize_state(self) -> tuple:
         """Bien obs phuc tap cua env thanh tuple lam key cho Q-table.
 
-        state = ( (xe1_ranh?, ..., xe4_ranh?),
-                ((sev_ca1, wait_bucket_ca1), ..., (sev_ca3, wait_bucket_ca3)) )
-        Ca trong slot duoc dien (0, 0). Kich thuoc toi da:
-        2^4 x (3 muc nghiem trong x 3 bucket + 1 o trong)^3 = 16.000 state.
+        state = ( (xe1_ranh?, ..., xeN_ranh?),
+                ((sev_ca1, wait_bucket_ca1), ..., (sev_ca3, wait_bucket_ca3)),
+                (nearest_amb_id, eta_bucket) )   <- nhom 3, state v2
+        Ca trong slot duoc dien (0, 0). Nhom 3 mo ta khoang cach toi
+        ca dau hang cho (xem _top_call_distance_features). Kich thuoc
+        ly thuyet toi da o cau hinh 6 xe: 2^6 x 10^3 x (6+1) x 4
+        = 1.792.000 state, nhung so state thuc te gap duoc nho hon
+        nhieu vi nearest_amb_id chi co the la mot xe dang RANH va
+        nhom 3 = (0, 0) moi khi khong co ca cho.
         """
         # Nhom 1: moi xe -> 1 neu RANH, 0 neu ban (dang chay nhiem vu).
         amb_part = tuple(
@@ -108,7 +165,9 @@ class GroupEnvAdapter:
                 )
             else:
                 call_part.append((0, 0))  # slot trong, khong co ca
-        return (amb_part, tuple(call_part))
+        # Nhom 3 (v2): khoang cach toi ca dau hang cho.
+        dist_part = self._top_call_distance_features(pending)
+        return (amb_part, tuple(call_part), dist_part)
 
     def reset(self, seed: int | None = None) -> tuple:
         """Reset env, tra ve state da roi rac hoa."""
