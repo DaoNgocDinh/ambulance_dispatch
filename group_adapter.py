@@ -2,15 +2,15 @@
 -> interface chuan cho tabular on-policy MC Control.
 
 Tai sao can adapter? Env cua nhom co 2 dac diem khac env tham khao:
-  1. Hanh dong la CAP (ma_xe, ma_cuoc_goi), khong phai so nguyen 0..3,
-     va KHONG co action "cho" rieng (cho = khong truyen action).
-  2. State la dict long nhau (80 nut, vi tri lien tuc) -> phai roi rac
-     hoa moi lam key cho Q-table duoc.
+1. Hanh dong la CAP (ma_xe, ma_cuoc_goi), khong phai so nguyen 0..3,
+    va KHONG co action "cho" rieng (cho = khong truyen action).
+2. State la dict long nhau (80 nut, vi tri lien tuc) -> phai roi rac
+    hoa moi lam key cho Q-table duoc.
 
 Adapter giai quyet ca 2 viec:
-  - Ma hoa moi cap (xe, ca) thanh so nguyen 0..12 (12 cap + 1 WAIT),
+- Ma hoa moi cap (xe, ca) thanh so nguyen 0..12 (12 cap + 1 WAIT),
     voi action masking: chi cap (xe RANH, ca PENDING) moi hop le.
-  - Rui ro quan trong: "slot" cua ca goi chi co nghia khi danh sach ca
+- Rui ro quan trong: "slot" cua ca goi chi co nghia khi danh sach ca
     duoc sap xep DETERMINISTIC giong nhau o moi buoc -> _sorted_pending()
     sap theo (-severity, -wait_time, call_id), trung voi tieu chi uu tien
     cua che do auto_dispatch trong env.
@@ -53,6 +53,9 @@ class GroupEnvAdapter:
         self.WAIT = self.num_pair_actions
         # Tong so hanh dong agent thay: 13 (0..11 dieu xe, 12 cho).
         self.number_of_actions = self.num_pair_actions + 1
+        # info cua step() gan nhat (reward_breakdown, truncated, backlog...)
+        # de evaluator ben ngoai doc theo quy chuan - adapter khong dung toi.
+        self.last_info: dict = {}
 
     # ------------------------------------------------------------------
     # 1. Sap xep ca PENDING theo thu tu deterministic (QUAN TRONG).
@@ -85,7 +88,7 @@ class GroupEnvAdapter:
         """Bien obs phuc tap cua env thanh tuple lam key cho Q-table.
 
         state = ( (xe1_ranh?, ..., xe4_ranh?),
-                  ((sev_ca1, wait_bucket_ca1), ..., (sev_ca3, wait_bucket_ca3)) )
+                ((sev_ca1, wait_bucket_ca1), ..., (sev_ca3, wait_bucket_ca3)) )
         Ca trong slot duoc dien (0, 0). Kich thuoc toi da:
         2^4 x (3 muc nghiem trong x 3 bucket + 1 o trong)^3 = 16.000 state.
         """
@@ -171,14 +174,17 @@ class GroupEnvAdapter:
     def step(self, action_idx: int) -> tuple[tuple, float, bool]:
         """Nhan action dang int, tra ve (next_state, reward, done) chuan.
 
-        Reward do env tu tinh theo dung thiet ke cua nhom:
-        -1.0 x muc do / phut cho moi ca dang cho;
-        -50 x muc do cho ca that bai / bi tu choi;
-        +100 x muc do cho ca hoan thanh (+50 x muc do neu hoan hao).
+        Reward lay NGUYEN tu env (khong tu tinh lai), theo REWARD_CONFIG
+        dang thuc thi trong dispatch_env/types.py:
+        cho -0.5/-1.0/-1.5 diem/phut theo muc 1/2/3; that bai
+        -30/-60/-120; hoan thanh +50/+65/+70; hoan hao +70/+80/+100;
+        phat quang duong -0.05/km. Chi tiet tung buoc nam trong
+        self.last_info["reward_breakdown"] sau moi lan step.
         """
         pair = self._decode(action_idx)
         # env.step chap nhan tuple (ma_xe, ma_ca) hoac None (cho).
         _obs, reward, done, _info = self.env.step(pair)
+        self.last_info = _info
         return self.discretize_state(), float(reward), bool(done)
 
     def get_summary(self) -> dict:

@@ -2,11 +2,11 @@
 
 Thuat toan (Sutton & Barto, chuong 5, Box 5.3 - khop ma gia muc 5.1.3.1
 trong bao cao cua nhom):
-  1. Sinh tron 1 episode theo chinh sach epsilon-greedy (epsilon-soft).
-  2. Duyet nguoc episode, tinh loi nhuan tich luy G = r + gamma*G.
-  3. Voi moi cap (s, a) chi cap nhat o lan XUAT HIEN DAU TIEN
-     (first-visit) bang trung binh tang dan: Q <- Q + (G - Q)/N(s,a).
-  4. Chinh sach epsilon-greedy suy tu Q moi -> tu dong tot dan (GPI).
+1. Sinh tron 1 episode theo chinh sach epsilon-greedy (epsilon-soft).
+2. Duyet nguoc episode, tinh loi nhuan tich luy G = r + gamma*G.
+3. Voi moi cap (s, a) chi cap nhat o lan XUAT HIEN DAU TIEN
+    (first-visit) bang trung binh tang dan: Q <- Q + (G - Q)/N(s,a).
+4. Chinh sach epsilon-greedy suy tu Q moi -> tu dong tot dan (GPI).
 
 Agent chi yeu cau: state la tuple hashable, action la so nguyen,
 valid_actions duoc truyen vao moi buoc. Moi dac thu cua env nam o
@@ -75,7 +75,13 @@ class MonteCarloAgent:
         if should_explore:
             return int(self.random_generator.choice(valid_actions))
         # Khai thac: chon Q lon nhat trong so hanh dong hop le.
-        q_values = self.q_table[state]
+        # Dung .get() thay vi [] de KHONG tao muc moi trong q_table
+        # khi gap state chua tung thay - nho do Evaluation khong lam
+        # thay doi Q-table du chi la them vector 0 (quy chuan Muc 5.2:
+        # evaluation khong duoc cap nhat kien thuc duoi bat ky dang nao).
+        q_values = self.q_table.get(state)
+        if q_values is None:
+            q_values = np.zeros(self.number_of_actions, dtype=np.float64)
         best_q_value = max(q_values[action] for action in valid_actions)
         # Pha hoa ngau nhien neu nhieu action cung Q toi da.
         best_actions = [
