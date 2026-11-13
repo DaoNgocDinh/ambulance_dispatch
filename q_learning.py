@@ -8,15 +8,19 @@ from __future__ import annotations
 
 import json
 import random
+from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Deque, Dict, List, Mapping, Optional, Sequence, Tuple
+
+
+ReplayTransition = Tuple[str, int, float, str, Tuple[int, ...], bool, int]
 
 
 class QLearningAgent:
     """Lưu và cập nhật Q(s, a) cho từng cặp trạng thái - hành động.
 
-    Q-table dùng khóa (state, action_id). Nếu một cặp chưa từng xuất hiện,
-    giá trị Q ban đầu được xem là 0.
+    Q-table dùng khóa (state, action_key). Nếu một cặp chưa từng xuất hiện,
+    giá trị Q ban đầu được khởi tạo bằng ``initial_q`` (mặc định 0.0).
     """
 
     def __init__(
@@ -27,6 +31,13 @@ class QLearningAgent:
         epsilon_min: float = 0.02,
         epsilon_decay: float = 0.995,
         seed: Optional[int] = None,
+        *,
+        adaptive_alpha: bool = False,
+        alpha_min: float = 0.02,
+        alpha_decay: float = 0.05,
+        initial_q: float = 0.0,
+        replay_capacity: int = 0,
+        replay_batch_size: int = 0,
     ) -> None:
         # Kiểm tra tham số trước khi tạo agent để tránh chạy với cấu hình sai.
         if not 0 < alpha <= 1:
@@ -37,43 +48,107 @@ class QLearningAgent:
             raise ValueError("epsilon và epsilon_min phải nằm trong [0, 1].")
         if not 0 < epsilon_decay <= 1:
             raise ValueError("epsilon_decay phải nằm trong (0, 1].")
+        if not 0 < alpha_min <= alpha:
+            raise ValueError("alpha_min phải nằm trong (0, alpha].")
+        if alpha_decay < 0:
+            raise ValueError("alpha_decay phải không âm.")
+        if replay_capacity < 0 or replay_batch_size < 0:
+            raise ValueError("replay_capacity và replay_batch_size phải không âm.")
 
-        self.alpha = alpha  # Tốc độ học: mức độ Q-value mới ảnh hưởng lên giá trị cũ.
+        self.alpha = alpha  # Tốc độ học ban đầu.
+        self.alpha_min = alpha_min  # Ngưỡng tốc độ học thấp nhất khi giảm theo số lần thăm.
+        self.alpha_decay = alpha_decay  # Tốc độ giảm alpha theo số lần thăm (s, a).
+        self.adaptive_alpha = adaptive_alpha  # Bật giảm alpha theo visit count (Robbins-Monro).
         self.gamma = gamma  # Hệ số chiết khấu: mức độ coi trọng phần thưởng tương lai.
         self.epsilon = epsilon  # Xác suất chọn ngẫu nhiên để tiếp tục khám phá.
         self.epsilon_min = epsilon_min  # Mức khám phá thấp nhất sau khi giảm dần.
         self.epsilon_decay = epsilon_decay  # Hệ số giảm epsilon sau mỗi episode.
+        self.initial_q = initial_q  # Giá trị Q khởi tạo cho cặp (s, a) chưa từng gặp.
+        self.replay_capacity = replay_capacity
+        self.replay_batch_size = replay_batch_size
+
         self.rng = random.Random(seed)  # Bộ sinh số riêng giúp kết quả có thể lặp lại.
-        # Khóa là (state key, action ID); giá trị là mức tốt mà agent đã học được.
+        # Khóa là (state key, action key); giá trị là mức tốt mà agent đã học được.
         self.q_table: Dict[Tuple[str, int], float] = {}
+        self.visit_counts: Dict[Tuple[str, int], int] = {}
+        self.replay_buffer: Deque[ReplayTransition] = deque(maxlen=replay_capacity)
+
+    @staticmethod
+    def _resolve_key(action: int, action_keys: Optional[Mapping[int, int]]) -> int:
+        if action_keys is None:
+            return action
+        return action_keys.get(action, action)
 
     def choose_action(
         self,
         state: str,
         valid_actions: Sequence[int],
         explore: bool = True,
+        action_keys: Optional[Mapping[int, int]] = None,
     ) -> int:
         """Chọn hành động theo epsilon-greedy, chỉ trong danh sách hợp lệ.
 
-        Khi explore=True, agent chọn ngẫu nhiên với xác suất epsilon để khám phá.
-        Các lần còn lại chọn hành động có Q-value cao nhất (khai thác kiến thức).
-        Khi hòa điểm, chọn ngẫu nhiên trong nhóm tốt nhất để tránh thiên lệch.
+        Khi ``action_keys`` được cung cấp, nhiều hành động thô đối xứng có thể
+        dùng chung một canonical action key trong Q-table để khái quát hóa tốt hơn.
         """
         if not valid_actions:
             raise ValueError("Phải cung cấp ít nhất một action hợp lệ.")
 
-        # Nhánh khám phá: thử một hành động hợp lệ bất kỳ.
+        # Nhánh khám phá: chọn đều theo nhóm canonical key nếu có ánh xạ đối xứng.
         if explore and self.rng.random() < self.epsilon:
-            return self.rng.choice(list(valid_actions))
+            if action_keys is None:
+                return self.rng.choice(list(valid_actions))
+            grouped: Dict[int, List[int]] = {}
+            for action in valid_actions:
+                key = self._resolve_key(action, action_keys)
+                grouped.setdefault(key, []).append(action)
+            chosen_key = self.rng.choice(list(grouped.keys()))
+            return self.rng.choice(grouped[chosen_key])
 
         # Nhánh khai thác: chọn giá trị Q lớn nhất trong các hành động được phép.
-        best_value = max(self.q_table.get((state, action), 0.0) for action in valid_actions)
-        best_actions = [
-            action
+        q_values = [
+            (action, self.q_table.get((state, self._resolve_key(action, action_keys)), self.initial_q))
             for action in valid_actions
-            if self.q_table.get((state, action), 0.0) == best_value
         ]
+        best_value = max(value for _, value in q_values)
+        best_actions = [action for action, value in q_values if value == best_value]
+        if not explore:
+            dispatch_bests = [a for a in best_actions if a != 0]
+            if dispatch_bests:
+                return dispatch_bests[0]
+            return best_actions[0]
         return self.rng.choice(best_actions)
+
+    def _effective_alpha(self, state: str, key: int) -> float:
+        if not self.adaptive_alpha:
+            return self.alpha
+        visits = self.visit_counts.get((state, key), 1)
+        decayed = self.alpha / (1.0 + self.alpha_decay * max(0, visits - 1))
+        return max(self.alpha_min, decayed)
+
+    def _apply_bellman_update(
+        self,
+        state: str,
+        key: int,
+        reward: float,
+        next_state: str,
+        next_keys: Sequence[int],
+        done: bool,
+        steps: int,
+        learning_rate: float,
+    ) -> None:
+        old_value = self.q_table.get((state, key), self.initial_q)
+        if done or not next_keys:
+            future_value = 0.0
+        else:
+            future_value = max(
+                self.q_table.get((next_state, next_key), self.initial_q)
+                for next_key in next_keys
+            )
+
+        discount = self.gamma ** max(1, steps)
+        target = reward + discount * future_value
+        self.q_table[(state, key)] = old_value + learning_rate * (target - old_value)
 
     def update(
         self,
@@ -83,31 +158,66 @@ class QLearningAgent:
         next_state: str,
         next_valid_actions: Sequence[int],
         done: bool,
+        *,
+        steps: int = 1,
+        action_key: Optional[int] = None,
+        next_action_keys: Optional[Mapping[int, int]] = None,
+        record_experience: bool = True,
     ) -> None:
-        """Cập nhật Q(s,a) theo công thức Q-learning:
+        """Cập nhật Q(s, a) theo công thức Q-learning (hỗ trợ Semi-MDP nhiều phút ``steps``).
 
-        Q mới = Q cũ + alpha * (mục tiêu - Q cũ)
-        Mục tiêu = reward + gamma * max(Q(next_state, hành động kế tiếp))
-
-        Chỉ xét next_valid_actions để không học từ hành động môi trường cấm.
-        Nếu episode đã kết thúc hoặc không còn hành động tiếp theo, giá trị tương
-        lai bằng 0; khi đó mục tiêu chỉ còn reward của bước hiện tại.
+        Q mới = Q cũ + alpha * (reward + gamma^steps * max Q(next_state, a') - Q cũ)
         """
-        # Nếu chưa gặp cặp này, bắt đầu học từ Q-value bằng 0.
-        old_value = self.q_table.get((state, action), 0.0)
-        if done or not next_valid_actions:
-            future_value = 0.0
-        else:
-            # Q-learning dùng hành động tương lai tốt nhất, không phụ thuộc
-            # hành động mà policy epsilon-greedy sẽ thực sự chọn ở bước sau.
-            future_value = max(
-                self.q_table.get((next_state, next_action), 0.0)
+        key = action if action_key is None else action_key
+        table_key = (state, key)
+        self.visit_counts[table_key] = self.visit_counts.get(table_key, 0) + 1
+        learning_rate = self._effective_alpha(state, key)
+
+        resolved_next_keys = tuple(
+            dict.fromkeys(
+                self._resolve_key(next_action, next_action_keys)
                 for next_action in next_valid_actions
             )
+        )
+        self._apply_bellman_update(
+            state=state,
+            key=key,
+            reward=reward,
+            next_state=next_state,
+            next_keys=resolved_next_keys,
+            done=done,
+            steps=steps,
+            learning_rate=learning_rate,
+        )
 
-        # Tính mục tiêu Bellman rồi dịch Q cũ một phần alpha về phía mục tiêu.
-        target = reward + self.gamma * future_value
-        self.q_table[(state, action)] = old_value + self.alpha * (target - old_value)
+        if record_experience and self.replay_capacity > 0:
+            self.replay_buffer.append(
+                (state, key, float(reward), next_state, resolved_next_keys, bool(done), max(1, int(steps)))
+            )
+
+    def replay_experiences(self, batch_size: Optional[int] = None) -> int:
+        """Ôn tập ngẫu nhiên các trải nghiệm đã lưu để lan truyền phần thưởng trễ nhanh hơn."""
+        if not self.replay_buffer:
+            return 0
+        count = self.replay_batch_size if batch_size is None else batch_size
+        if count <= 0:
+            return 0
+
+        sample_size = min(count, len(self.replay_buffer))
+        transitions = self.rng.sample(list(self.replay_buffer), sample_size)
+        for state, key, reward, next_state, next_keys, done, steps in transitions:
+            learning_rate = max(self.alpha_min, 0.5 * self._effective_alpha(state, key))
+            self._apply_bellman_update(
+                state=state,
+                key=key,
+                reward=reward,
+                next_state=next_state,
+                next_keys=next_keys,
+                done=done,
+                steps=steps,
+                learning_rate=learning_rate,
+            )
+        return sample_size
 
     def decay_exploration(self) -> None:
         """Giảm xác suất khám phá sau mỗi episode, giữ epsilon không dưới giới hạn."""
@@ -116,7 +226,6 @@ class QLearningAgent:
     def save(self, path: Path) -> None:
         """Lưu Q-table thành JSON để có thể tiếp tục dùng hoặc kiểm tra."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Chuyển dictionary có khóa tuple thành danh sách object dễ lưu dưới dạng JSON.
         rows = [
             {"state": state, "action_id": action, "q_value": value}
             for (state, action), value in self.q_table.items()
@@ -138,6 +247,5 @@ class QLearningAgent:
                 or not isinstance(row.get("q_value"), (int, float))
             ):
                 raise ValueError("Dòng dữ liệu không hợp lệ trong Q-table.")
-            # Chỉ thay Q-table hiện tại sau khi từng dòng đã được xác nhận hợp lệ.
             loaded[(row["state"], row["action_id"])] = float(row["q_value"])
         self.q_table = loaded

@@ -97,6 +97,72 @@ class TestQLearningAgent(unittest.TestCase):
             loaded_agent.load(path)
         self.assertEqual(loaded_agent.q_table, {("trạng_thái", 8): 3.5})
 
+    def test_candidate_actions_keeps_wait_and_partial_dispatch(self) -> None:
+        env = AmbulanceDispatchEnv(seed=42)
+        obs = env.reset(seed=42)
+        for _ in range(120):
+            slots = [c for c in obs["call_slots"] if c is not None]
+            if len(slots) >= 2 and len(self.adapter.get_idle_ambulances_from_obs(obs)) >= 2:
+                break
+            obs, _, done, _ = env.step(action=0)
+            if done:
+                break
+
+        all_valid = self.adapter.valid_actions(env, obs)
+        candidates = self.adapter.candidate_actions(env, obs)
+        self.assertIn(0, candidates)
+        self.assertTrue(set(candidates).issubset(set(all_valid)))
+        decoded_sizes = {len(env.decode_action(aid)) for aid in candidates}
+        self.assertIn(1, decoded_sizes)
+
+    def test_high_sev_kpi_none_on_empty_and_stats_excludes_missing(self) -> None:
+        from train_q_learning import _stats, run_episode
+
+        empty_env = AmbulanceDispatchEnv(seed=123, max_time=1, max_overtime=0, poisson_lambda=0.0)
+        row = run_episode(empty_env, self.adapter, self.agent, training=False, seed=123)
+        self.assertIsNone(row["high_sev_served_rate"])
+        self.assertIsNone(row["high_sev_failed_rate"])
+        self.assertIsNone(row["high_sev_response_time"])
+
+        mean_v, _, min_v, max_v, n_valid = _stats([10.0, None, float("nan"), 20.0])
+        self.assertEqual(n_valid, 2)
+        self.assertAlmostEqual(mean_v, 15.0)
+        self.assertAlmostEqual(min_v, 10.0)
+        self.assertAlmostEqual(max_v, 20.0)
+
+    def test_correctness_gate_includes_g3_and_g6(self) -> None:
+        from train_q_learning import run_episode, verify_correctness_gate
+
+        make_env = lambda sd: AmbulanceDispatchEnv(seed=sd)
+        run_episode(make_env(123), self.adapter, self.agent, training=True, seed=123)
+        q_snap = dict(self.agent.q_table)
+        v_snap = dict(self.agent.visit_counts)
+        ev_row = run_episode(make_env(124), self.adapter, self.agent, training=False, seed=124)
+        ev_row["strategy"] = "Q-learning"
+        checks = verify_correctness_gate(
+            make_env=make_env,
+            adapter=self.adapter,
+            agent=self.agent,
+            evaluation_rows=[ev_row],
+            q_table_before_eval=q_snap,
+            visits_before_eval=v_snap,
+            repro_seed=124,
+        )
+        self.assertEqual(checks["G3_learning_update_correctness"][0], "PASS")
+        self.assertEqual(checks["G6_env_static_and_config"][0], "PASS")
+        self.assertEqual(checks["G6_env_git_working_tree"][0], "PASS")
+
+        tampered_checks = verify_correctness_gate(
+            make_env=lambda sd: AmbulanceDispatchEnv(seed=sd, max_time=10, max_overtime=0),
+            adapter=self.adapter,
+            agent=self.agent,
+            evaluation_rows=[ev_row],
+            q_table_before_eval=q_snap,
+            visits_before_eval=v_snap,
+            repro_seed=124,
+        )
+        self.assertEqual(tampered_checks["G6_env_static_and_config"][0], "FAIL")
+
 
 if __name__ == "__main__":
     unittest.main()
