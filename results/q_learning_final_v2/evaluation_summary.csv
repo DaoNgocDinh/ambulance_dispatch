@@ -1,0 +1,29 @@
+﻿Strategy,Metric,Mean,Std,Min,Max,N_Valid,Total_Episodes
+Q-learning,Served Rate (%),65.71,6.49,56.1,77.42,10,10
+Q-learning,Failed Rate (%),34.29,6.49,22.58,43.9,10,10
+Q-learning,Unresolved Rate (%),0.0,0.0,0.0,0.0,10,10
+Q-learning,High-Sev Served (%),44.56,13.17,27.27,66.67,10,10
+Q-learning,High-Sev Failed (%),55.44,13.17,33.33,72.73,10,10
+Q-learning,High-Sev Resp (p),19.37,3.78,14.7,25.68,10,10
+Q-learning,Avg Wait (p),31.76,2.84,26.6,36.29,10,10
+Q-learning,Avg Slack (p),5.12,4.16,0.11,15.01,10,10
+Q-learning,Prio Violation (%),1.44,1.12,0.0,3.26,10,10
+Q-learning,Episode Reward,-534.44,358.4,-1321.76,-8.13,10,10
+Q-learning,Total Distance (km),667.15,80.62,559.86,776.45,10,10
+Q-learning,Utilization (%),62.46,7.04,52.37,72.86,10,10
+Q-learning,No-op QĐ (%),71.62,10.96,47.76,85.78,10,10
+Q-learning,State Hit (%),96.96,1.87,94.57,100.0,10,10
+Auto-dispatch,Served Rate (%),62.82,8.07,55.26,80.65,10,10
+Auto-dispatch,Failed Rate (%),37.18,8.07,19.35,44.74,10,10
+Auto-dispatch,Unresolved Rate (%),0.0,0.0,0.0,0.0,10,10
+Auto-dispatch,High-Sev Served (%),43.18,12.38,25.0,66.67,10,10
+Auto-dispatch,High-Sev Failed (%),56.82,12.38,33.33,75.0,10,10
+Auto-dispatch,High-Sev Resp (p),19.58,3.53,14.56,24.37,10,10
+Auto-dispatch,Avg Wait (p),31.52,3.02,26.86,36.89,10,10
+Auto-dispatch,Avg Slack (p),4.7,3.42,1.17,12.36,10,10
+Auto-dispatch,Prio Violation (%),0.0,0.0,0.0,0.0,10,10
+Auto-dispatch,Episode Reward,-687.26,389.53,-1193.25,69.18,10,10
+Auto-dispatch,Total Distance (km),693.21,96.59,552.93,830.34,10,10
+Auto-dispatch,Utilization (%),66.31,7.25,52.55,76.3,10,10
+Auto-dispatch,No-op QĐ (%),0.0,0.0,0.0,0.0,10,10
+Auto-dispatch,State Hit (%),0.0,0.0,0.0,0.0,10,10

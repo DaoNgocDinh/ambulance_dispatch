@@ -579,7 +579,7 @@ class AmbulanceDispatchEnv:
             "action_mask": self.get_action_mask(),
             "ambulances": amb_obs,
             "edges": edge_obs,
-            "edges_by_id": edge_obs_by_id,
+            "edges_by_id": edge_obs_by_id, 
             "edge_congestion": edge_congestion,
             "edge_congestion_by_id": edge_congestion_by_id,
             "edge_id_to_nodes": dict(self.city_map.id_to_edge),

@@ -1,0 +1,3 @@
+﻿seed,total_reward,calls,served,failed,perfect,success_rate,failure_rate,perfect_rate,steps,truncated,episode,epsilon,q_table_size
+42,-7.047023940277782,2,1,0,0,0.5,0.0,0.0,70,True,1,0.2,70
+43,47.22320070061732,3,2,0,0,0.6666666666666666,0.0,0.0,70,True,2,0.199,138
