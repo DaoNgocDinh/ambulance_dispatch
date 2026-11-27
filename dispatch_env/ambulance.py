@@ -6,6 +6,7 @@ xử lý các sự kiện đến hiện trường, chăm sóc y tế, di chuyể
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Tuple, List, Optional, Dict, Any
 from dispatch_env.types import AmbulanceStatus, CallStatus
@@ -55,6 +56,8 @@ class Ambulance:
     last_step_distance: float = 0.0
     reroute_count: int = 0
     last_rerouted_this_step: bool = False
+    idle_reposition_target_edge: Optional[Tuple[int, int]] = None
+    idle_reposition_target_dist: Optional[float] = None
 
     def __post_init__(self) -> None:
         if not self.route_edges:
@@ -72,6 +75,24 @@ class Ambulance:
         x = nu.x + ratio * (nv.x - nu.x)
         y = nu.y + ratio * (nv.y - nu.y)
         return (round(float(x), 2), round(float(y), 2))
+
+    @property
+    def is_repositioning(self) -> bool:
+        return self.idle_reposition_target_edge is not None
+
+    def start_idle_reposition(
+        self,
+        route_edges: List[Tuple[int, int]],
+        target_edge: Tuple[int, int],
+        target_dist: float,
+    ) -> None:
+        if self.status != AmbulanceStatus.IDLE or self.current_call_id is not None:
+            raise RuntimeError("Only an idle ambulance can be repositioned")
+        if not route_edges or route_edges[0] != self.current_edge:
+            raise ValueError("Reposition route must start at the ambulance's current edge")
+        self.route_edges = list(route_edges)
+        self.idle_reposition_target_edge = target_edge
+        self.idle_reposition_target_dist = float(target_dist)
 
     def get_road_speed(self, city_map: CityMap) -> float:
         """Vận tốc cho phép trên cung đường hiện tại (km/h) dựa trên mức độ tắc và phân vùng."""
@@ -129,11 +150,14 @@ class Ambulance:
             "hospital_time_remaining": round(self.hospital_time_remaining, 2),
             "route": list(self.route_edges),
             "route_edge_ids": [city_map.edge_to_id.get(e, 0) for e in self.route_edges],
+            "is_repositioning": self.is_repositioning,
             "total_distance_traveled": round(self.total_distance_traveled, 2),
         }
 
     def dispatch_to_call(self, call: EmergencyCall, city_map: CityMap) -> None:
         """Phân công xe cứu thương đi tiếp nhận một cuộc gọi cấp cứu mới."""
+        self.idle_reposition_target_edge = None
+        self.idle_reposition_target_dist = None
         self.status = AmbulanceStatus.EN_ROUTE_TO_CALL
         self.current_call_id = call.call_id
         self.target_type = "call"
@@ -170,6 +194,8 @@ class Ambulance:
         self.scene_time_remaining = 0.0
         self.hospital_time_remaining = 0.0
         self.assigned_hospital_id = None
+        self.idle_reposition_target_edge = None
+        self.idle_reposition_target_dist = None
         self.route_edges = [self.current_edge]
 
     def select_best_hospital_and_route(self, city_map: CityMap) -> int:
@@ -209,7 +235,7 @@ class Ambulance:
     def reroute_if_beneficial(self, city_map: CityMap) -> bool:
         """
         Tính toán lại tuyến đường bằng Dijkstra khi môi trường giao thông thay đổi.
-        Nếu tìm thấy tuyến đường mới khác tuyến hiện tại, cập nhật và tăng số lần reroute.
+        Chỉ đổi tuyến khi ETA mới giảm ít nhất 25% so với tuyến đang chạy.
         """
         if self.status not in (AmbulanceStatus.EN_ROUTE_TO_CALL, AmbulanceStatus.EN_ROUTE_TO_HOSPITAL):
             self.last_rerouted_this_step = False
@@ -229,6 +255,11 @@ class Ambulance:
 
         new_edges = list(new_route["edges_path"])
         if new_edges != self.route_edges:
+            current_eta = self._route_eta_minutes(city_map, self.route_edges)
+            new_eta = float(new_route["total_time_minutes"])
+            if not math.isfinite(current_eta) or new_eta > current_eta * 0.75:
+                self.last_rerouted_this_step = False
+                return False
             self.route_edges = new_edges
             self.reroute_count += 1
             self.last_rerouted_this_step = True
@@ -236,6 +267,34 @@ class Ambulance:
 
         self.last_rerouted_this_step = False
         return False
+
+    def _route_eta_minutes(
+        self,
+        city_map: CityMap,
+        route_edges: List[Tuple[int, int]],
+    ) -> float:
+        if not route_edges or self.target_edge is None or self.target_dist is None:
+            return math.inf
+        if len(route_edges) == 1 and route_edges[0] == self.target_edge:
+            distance = max(0.0, self.target_dist - self.distance_from_start)
+            edge = city_map.edges[route_edges[0]]
+            return distance / max(edge.speed, 1e-6) * 60.0
+
+        remaining_distances = [
+            max(
+                0.0,
+                city_map.edges[route_edges[0]].length - self.distance_from_start,
+            )
+        ]
+        remaining_distances.extend(
+            city_map.edges[edge_key].length for edge_key in route_edges[1:-1]
+        )
+        remaining_distances.append(self.target_dist)
+        eta = 0.0
+        for edge_key, distance in zip(route_edges, remaining_distances):
+            edge = city_map.edges[edge_key]
+            eta += distance / max(edge.speed, 1e-6) * 60.0
+        return eta
 
     def step_continuous(
         self,
@@ -258,6 +317,8 @@ class Ambulance:
         while time_budget > 1e-6:
             # 1. Trạng thái rảnh (IDLE)
             if self.status == AmbulanceStatus.IDLE:
+                if self.is_repositioning:
+                    self._advance_idle_reposition(time_budget, city_map)
                 break
 
             # 2. Đang di chuyển đến cuộc gọi (EN_ROUTE_TO_CALL)
@@ -431,3 +492,57 @@ class Ambulance:
                     break
 
         self.last_step_distance = self.total_distance_traveled - start_total_dist
+
+    def _advance_idle_reposition(
+        self,
+        time_budget: float,
+        city_map: CityMap,
+    ) -> None:
+        """Move an idle unit along its requested road route for this time slice."""
+        while time_budget > 1e-6 and self.is_repositioning:
+            if not self.route_edges:
+                raise RuntimeError("Idle reposition route unexpectedly became empty")
+            edge_key = self.route_edges[0]
+            edge = city_map.edges[edge_key]
+            is_final_edge = edge_key == self.idle_reposition_target_edge
+            target_dist = (
+                float(self.idle_reposition_target_dist)
+                if is_final_edge and self.idle_reposition_target_dist is not None
+                else edge.length
+            )
+            remaining_distance = target_dist - self.distance_from_start
+            if remaining_distance <= 1e-6:
+                if is_final_edge:
+                    self._finish_idle_reposition()
+                    break
+                self.route_edges.pop(0)
+                if not self.route_edges:
+                    raise RuntimeError("Idle reposition route ended before its target")
+                self.current_edge = self.route_edges[0]
+                self.distance_from_start = 0.0
+                continue
+
+            speed_km_per_minute = edge.speed / 60.0
+            time_to_target = remaining_distance / max(speed_km_per_minute, 1e-4)
+            if time_budget >= time_to_target:
+                self.total_distance_traveled += remaining_distance
+                self.distance_from_start = target_dist
+                time_budget -= time_to_target
+                if is_final_edge:
+                    self._finish_idle_reposition()
+                    break
+                self.route_edges.pop(0)
+                if not self.route_edges:
+                    raise RuntimeError("Idle reposition route ended before its target")
+                self.current_edge = self.route_edges[0]
+                self.distance_from_start = 0.0
+            else:
+                distance = time_budget * speed_km_per_minute
+                self.distance_from_start += distance
+                self.total_distance_traveled += distance
+                break
+
+    def _finish_idle_reposition(self) -> None:
+        self.idle_reposition_target_edge = None
+        self.idle_reposition_target_dist = None
+        self.route_edges = [self.current_edge]

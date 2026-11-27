@@ -1,0 +1,110 @@
+================================================================================
+BÁO CÁO KẾT QUẢ HUẤN LUYỆN & ĐÁNH GIÁ TABULAR Q-LEARNING
+Dự án: Ambulance Dispatch Simulation
+Thời gian tạo báo cáo: 2026-11-13 08:41:08
+================================================================================
+
+1. CẤU HÌNH HUẤN LUYỆN (HYPERPARAMETERS)
+--------------------------------------------------------------------------------
+  Số episodes huấn luyện: 200
+  Tốc độ học (alpha): 0.12 (adaptive_alpha=True, alpha_min=0.015, alpha_decay=0.04)
+  Hệ số chiết khấu (gamma): 0.96
+  Khám phá (epsilon): start=0.8, min=0.02
+  Hạt giống cơ sở (seed): 42
+  Hạt giống huấn luyện: 42 .. 241
+  Hạt giống validation: 50042 .. 50051 (chu kỳ val: 40 ep)
+  Hạt giống đánh giá: 200042 .. 200051
+  Top-K điều phối mỗi slot: 2
+  Replay buffer: capacity=15000, batch_size=128
+  Thời gian huấn luyện: 3.53 phút (211.5 giây)
+  Thời gian đánh giá: 0.26 phút (15.7 giây)
+  Checkpoint tốt nhất: Episode 120 (Val score=67.35%, -408.36)
+  Kích thước Q-table: 922 cặp trạng thái-hành động
+
+2. KẾT QUẢ KIỂM CHỨNG CORRECTNESS GATE (G1 - G7)
+--------------------------------------------------------------------------------
+  [PASS] G1_observation_and_status_mapping      | Observation đủ khóa chuẩn và khớp AmbulanceStatus.IDLE
+  [PASS] G2_action_mask_zero_violations         | mask_violations=0
+  [PASS] G3_learning_update_correctness         | Semi-MDP/Terminal/adaptive_alpha + 1-ep probe Q=53 cặp, finite=True
+  [PASS] G4_reward_reconciliation_with_t0       | t0 + sum(step_rewards) == total_reward & served+failed+unresolved == calls
+  [PASS] G5_eval_policy_frozen                  | Q-table và visit_counts bất biến trong đánh giá
+  [PASS] G6_env_static_and_config               | AST mutations=0, core_env_imports=0, default_config=True
+  [PASS] G6_env_git_working_tree                | sạch so với HEAD (giới hạn: không kiểm được thay đổi đã commit trước)
+  [PASS] G7_seed_reproducibility                | Lặp lại seed=200042 khớp reward/served/failed/action_trace
+
+3. BẢNG KẾT QUẢ CHI TIẾT TỪNG SEED ĐÁNH GIÁ (EVALUATION PER SEED)
+--------------------------------------------------------------------------------
+  Seed     Chiến lược      Hoàn thành     Thất bại     Tỉ lệ (%)    Reward       No-op (%) 
+  200042   Q-learning       23/41  ca ( 56.1%)  18 ca       56.1%         -1321.76   76.4%    
+  200042   Auto-dispatch    23/41  ca ( 56.1%)  18 ca       56.1%         -1193.25    0.0%    
+  200043   Q-learning       26/42  ca ( 61.9%)  16 ca       61.9%          -725.45   72.6%    
+  200043   Auto-dispatch    24/42  ca ( 57.1%)  18 ca       57.1%          -878.10    0.0%    
+  200044   Q-learning       22/38  ca ( 57.9%)  16 ca       57.9%          -599.20   81.2%    
+  200044   Auto-dispatch    21/38  ca ( 55.3%)  17 ca       55.3%         -1131.04    0.0%    
+  200045   Q-learning       21/32  ca ( 65.6%)  11 ca       65.6%          -538.66   66.3%    
+  200045   Auto-dispatch    20/32  ca ( 62.5%)  12 ca       62.5%          -444.96    0.0%    
+  200046   Q-learning       21/32  ca ( 65.6%)  11 ca       65.6%          -386.01   85.8%    
+  200046   Auto-dispatch    23/32  ca ( 71.9%)   9 ca       71.9%          -324.43    0.0%    
+  200047   Q-learning       27/41  ca ( 65.9%)  14 ca       65.9%          -374.62   47.8%    
+  200047   Auto-dispatch    24/41  ca ( 58.5%)  17 ca       58.5%          -807.86    0.0%    
+  200048   Q-learning       25/37  ca ( 67.6%)  12 ca       67.6%          -288.34   69.3%    
+  200048   Auto-dispatch    22/37  ca ( 59.5%)  15 ca       59.5%          -707.91    0.0%    
+  200049   Q-learning       24/31  ca ( 77.4%)   7 ca       77.4%            -8.13   77.6%    
+  200049   Auto-dispatch    25/31  ca ( 80.6%)   6 ca       80.6%            69.18    0.0%    
+  200050   Q-learning       26/40  ca ( 65.0%)  14 ca       65.0%          -785.42   62.0%    
+  200050   Auto-dispatch    24/40  ca ( 60.0%)  16 ca       60.0%          -945.64    0.0%    
+  200051   Q-learning       20/27  ca ( 74.1%)   7 ca       74.1%          -316.78   77.3%    
+  200051   Auto-dispatch    18/27  ca ( 66.7%)   9 ca       66.7%          -508.56    0.0%    
+
+4. BẢNG TỔNG KẾT THỐNG KÊ TOÀN DIỆN (MEAN ± STD, MIN, MAX)
+--------------------------------------------------------------------------------
+  [Q-learning] (N=10 seeds):
+    Served Rate (%)      :    65.71 ±   6.49  (min=   56.10, max=   77.42, n=10/10)
+    Failed Rate (%)      :    34.29 ±   6.49  (min=   22.58, max=   43.90, n=10/10)
+    Unresolved Rate (%)  :     0.00 ±   0.00  (min=    0.00, max=    0.00, n=10/10)
+    High-Sev Served (%)  :    44.56 ±  13.17  (min=   27.27, max=   66.67, n=10/10)
+    High-Sev Resp (p)    :    19.37 ±   3.78  (min=   14.70, max=   25.68, n=10/10)
+    Avg Wait (p)         :    31.76 ±   2.84  (min=   26.60, max=   36.29, n=10/10)
+    Avg Slack (p)        :     5.12 ±   4.16  (min=    0.11, max=   15.01, n=10/10)
+    Prio Violation (%)   :     1.44 ±   1.12  (min=    0.00, max=    3.26, n=10/10)
+    Episode Reward       :  -534.44 ± 358.40  (min=-1321.76, max=   -8.13, n=10/10)
+    Total Distance (km)  :   667.15 ±  80.62  (min=  559.86, max=  776.45, n=10/10)
+    Utilization (%)      :    62.46 ±   7.04  (min=   52.37, max=   72.86, n=10/10)
+    No-op QĐ (%)         :    71.62 ±  10.96  (min=   47.76, max=   85.78, n=10/10)
+    State Hit (%)        :    96.96 ±   1.87  (min=   94.57, max=  100.00, n=10/10)
+  [Auto-dispatch] (N=10 seeds):
+    Served Rate (%)      :    62.82 ±   8.07  (min=   55.26, max=   80.65, n=10/10)
+    Failed Rate (%)      :    37.18 ±   8.07  (min=   19.35, max=   44.74, n=10/10)
+    Unresolved Rate (%)  :     0.00 ±   0.00  (min=    0.00, max=    0.00, n=10/10)
+    High-Sev Served (%)  :    43.18 ±  12.38  (min=   25.00, max=   66.67, n=10/10)
+    High-Sev Resp (p)    :    19.58 ±   3.53  (min=   14.56, max=   24.37, n=10/10)
+    Avg Wait (p)         :    31.52 ±   3.02  (min=   26.86, max=   36.89, n=10/10)
+    Avg Slack (p)        :     4.70 ±   3.42  (min=    1.17, max=   12.36, n=10/10)
+    Prio Violation (%)   :     0.00 ±   0.00  (min=    0.00, max=    0.00, n=10/10)
+    Episode Reward       :  -687.26 ± 389.53  (min=-1193.25, max=   69.18, n=10/10)
+    Total Distance (km)  :   693.21 ±  96.59  (min=  552.93, max=  830.34, n=10/10)
+    Utilization (%)      :    66.31 ±   7.25  (min=   52.55, max=   76.30, n=10/10)
+    No-op QĐ (%)         :     0.00 ±   0.00  (min=    0.00, max=    0.00, n=10/10)
+    State Hit (%)        :     0.00 ±   0.00  (min=    0.00, max=    0.00, n=10/10)
+
+5. PHÂN TÍCH NGUYÊN NHÂN VÀ GIẢI PHÁP WAIT LOOP
+--------------------------------------------------------------------------------
+  Nguyên nhân cốt lõi của WAIT loop:
+    1. Bất đối xứng Semi-MDP: Hành động WAIT chỉ kéo dài 1 phút (chiết khấu gamma^1 = 0.96),
+       trong khi DISPATCH kéo dài 5-15 phút đến khi có cuộc gọi mới (chiết khấu gamma^15 = 0.54).
+    2. Độ trễ phần thưởng hoàn thành: Phần thưởng hoàn thành (+50, +65, +70) chỉ xuất hiện
+       sau 20-30 phút khi xe đưa bệnh nhân đến bệnh viện, trong khi transition của DISPATCH
+       đã bị đóng từ phút thứ 5-10 mà không nhận được tín chỉ hoàn thành nào.
+    3. Gán nhầm phần thưởng: Khi xe hoàn thành ở phút 30, nếu agent đang chọn WAIT cho một
+       cuộc gọi khác, phần thưởng +70 lại được cộng vào macro_reward của hành động WAIT!
+    4. Tie-breaking mặc định chọn 0: Trên các trạng thái chưa gặp (unseen state), giá trị Q
+       đều bằng 0.0, thuật toán tie-break chọn phần tử đầu tiên (action 0 = WAIT).
+
+  Giải pháp khắc phục:
+    1. Immediate Dispatch Credit Assignment: Gán tín chỉ hoàn thành kỳ vọng trực tiếp vào
+       thời điểm điều phối cho các cuộc gọi khả thi (ETA <= deadline - t), đồng thời loại trừ
+       completion_bonus xuất hiện trễ ở các bước sau để tránh gán nhầm cho WAIT.
+    2. Smart Deterministic Tie-breaking: Khi các giá trị Q bằng nhau (trạng thái chưa gặp),
+       ưu tiên hành động điều phối tốt nhất thay vì mặc định chọn WAIT, loại bỏ hoàn toàn
+       hiện tượng kẹt trong vòng lặp chờ vô tận trên các trạng thái mới.
+================================================================================

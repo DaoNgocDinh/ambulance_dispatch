@@ -32,6 +32,11 @@ from .hospital import HospitalOnRoad
 from .node import IntersectionType, MapNode
 
 
+CITY_CENTER_NODE_ID = 1
+CITY_CENTER_COVERAGE_RADIUS_KM = 8.0
+IDLE_CLUSTER_DISTANCE_KM = 3.0
+
+
 class CityMap:
     """
     Lớp quản lý bản đồ giao thông đô thị 80 nút và 4 bệnh viện.
@@ -80,6 +85,12 @@ class CityMap:
         self._build_roads()
         self._place_hospitals()
         self.randomize_traffic(initial=True)
+
+    @property
+    def center_coord(self) -> Tuple[float, float]:
+        """Coordinate of the central downtown hub used for fleet coverage."""
+        node = self.nodes[CITY_CENTER_NODE_ID]
+        return float(node.x), float(node.y)
 
     # ========================================================================
     # 1. KHỞI TẠO 80 NÚT VỚI TỌA ĐỘ VÀ PHÂN BỐ ĐÔ THỊ

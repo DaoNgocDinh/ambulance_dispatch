@@ -18,6 +18,7 @@ from dispatch_env.types import (
 from dispatch_env.call import EmergencyCall
 from dispatch_env.ambulance import Ambulance
 from dispatch_env.environment import AmbulanceDispatchEnv
+from dispatch_env.sarsa import SarsaAgent
 
 __all__ = [
     "AmbulanceStatus",
@@ -34,4 +35,5 @@ __all__ = [
     "EmergencyCall",
     "Ambulance",
     "AmbulanceDispatchEnv",
+    "SarsaAgent",
 ]
