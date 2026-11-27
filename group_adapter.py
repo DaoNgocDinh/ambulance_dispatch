@@ -8,21 +8,13 @@ Tai sao can adapter? Env cua nhom co 2 dac diem khac env tham khao:
     hoa moi lam key cho Q-table duoc.
 
 Adapter giai quyet ca 2 viec:
-- Ma hoa moi cap (xe, ca) thanh so nguyen 0..12 (12 cap + 1 WAIT),
+- Ma hoa moi cap (xe, ca) thanh so nguyen (cau hinh chuan 6 xe:
+    18 cap, chi so 0..17, + 1 WAIT o chi so 18; tong 19 hanh dong),
     voi action masking: chi cap (xe RANH, ca PENDING) moi hop le.
 - Rui ro quan trong: "slot" cua ca goi chi co nghia khi danh sach ca
     duoc sap xep DETERMINISTIC giong nhau o moi buoc -> _sorted_pending()
     sap theo (-severity, -wait_time, call_id), trung voi tieu chi uu tien
     cua che do auto_dispatch trong env.
-
-PHIEN BAN STATE v2 (STATE_VERSION = 2):
-State duoc bo sung NHOM 3 - thong tin KHOANG CACH toi ca o dau hang
-cho (slot 0 cua _sorted_pending): (ma xe ranh co ETA ngan nhat, bucket
-ETA). ETA tinh bang DUNG ham city_map.route_from_road_to_road ma che
-do auto_dispatch cua env dung de chon xe, nen agent va heuristic gio
-"nhin" cung mot dai luong khoang cach (du agent chi thay dang tho).
-Q-table train bang state v1 (khong co nhom 3) KHONG dung lai duoc:
-khoa state khac han, phai train lai tu dau.
 """
 
 from __future__ import annotations
@@ -40,14 +32,16 @@ class GroupEnvAdapter:
         self,
         env: AmbulanceDispatchEnv | None = None,
         max_time: int = 360,
-        poisson_lambda: float = 0.5,
+        poisson_lambda: float = 0.1,
         max_pending_calls: int = 3,
-        num_ambulances: int = 4,
+        num_ambulances: int = 6,
         seed: int = 42,
     ) -> None:
         # Neu khong truyen env san thi tu tao theo tham so.
-        # LUU Y: poisson_lambda mac dinh trong code env la 0.05, nhung
-        # README va run_simulation.py cua nhom dung 0.5 -> o day lay 0.5.
+        # Mac dinh o day khop CAU HINH CHUAN cua env (6 xe, lambda 0.1,
+        # xem DEFAULT_* trong dispatch_env). Trong pipeline that,
+        # run_mc_simulation.py va evaluate_mc.py luon dung env o ngoai
+        # roi truyen vao, nen cac mac dinh nay chi dung khi tu tao nhanh.
         if env is None:
             env = AmbulanceDispatchEnv(
                 max_time=max_time,
@@ -59,10 +53,10 @@ class GroupEnvAdapter:
         self.env = env
         self.num_ambulances = env.num_ambulances
         self.max_pending = env.max_pending_calls
-        # So cap (xe, ca) toi da = 4 xe x 3 ca = 12; index cuoi la WAIT.
+        # So cap (xe, ca) toi da = so xe x so ca cho (chuan: 6 x 3 = 18).
         self.num_pair_actions = self.num_ambulances * self.max_pending
         self.WAIT = self.num_pair_actions
-        # Tong so hanh dong agent thay: 13 (0..11 dieu xe, 12 cho).
+        # Tong so hanh dong agent thay: so cap + 1 (chuan: 19, WAIT o cuoi).
         self.number_of_actions = self.num_pair_actions + 1
         # info cua step() gan nhat (reward_breakdown, truncated, backlog...)
         # de evaluator ben ngoai doc theo quy chuan - adapter khong dung toi.
@@ -93,7 +87,7 @@ class GroupEnvAdapter:
         return 2
 
     # ------------------------------------------------------------------
-    # 2. Roi rac hoa state: (trang thai 4 xe, thong tin 3 ca cho).
+    # 2. Roi rac hoa state: (trang thai cac xe, thong tin 3 ca cho).
     # ------------------------------------------------------------------
     # Nguong chia bucket ETA cho ca dau hang cho (phut): <8 gan,
     # 8..18 vua, >18 xa. Chon theo deadline muc 3 (30 phut): ETA > 18

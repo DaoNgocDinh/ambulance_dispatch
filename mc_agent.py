@@ -34,7 +34,8 @@ class MonteCarloAgent:
         epsilon_decay: float = 0.995,
         seed: int = 42,
     ) -> None:
-        # So hanh dong (do adapter quyet dinh, o day = 13: 12 cap xe-ca + cho).
+        # So hanh dong (do adapter quyet dinh; cau hinh chuan 6 xe:
+        # 19 = 18 cap xe-ca + 1 hanh dong cho).
         self.number_of_actions = number_of_actions
         # He so chiet khau gamma (bao cao cua nhom: 0.95).
         self.discount_factor = discount_factor
