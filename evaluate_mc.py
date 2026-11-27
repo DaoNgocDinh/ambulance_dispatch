@@ -53,8 +53,7 @@ from mc_agent import MonteCarloAgent
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-DEFAULT_EVAL_SEEDS = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
-
+DEFAULT_EVAL_SEEDS = list(range(1000, 1010))
 UNRESOLVED_STATUSES = (
     CallStatus.PENDING,
     CallStatus.WAITING_FOR_AMBULANCE,

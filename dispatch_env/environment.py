@@ -12,7 +12,12 @@ import math
 from typing import Dict, List, Tuple, Optional, Any, Union, Sequence, Set
 import numpy as np
 
-from map_env.city_map import CityMap
+from map_env.city_map import (
+    CITY_CENTER_COVERAGE_RADIUS_KM,
+    CITY_CENTER_NODE_ID,
+    IDLE_CLUSTER_DISTANCE_KM,
+    CityMap,
+)
 from dispatch_env.types import (
     AmbulanceStatus,
     CallStatus,
@@ -105,6 +110,7 @@ class AmbulanceDispatchEnv:
         self.slot_action_to_id: Dict[Tuple[Tuple[int, int], ...], int] = {
             act: idx for idx, act in enumerate(self.potential_actions)
         }
+        self._action_mask_cache: Dict[Tuple[int, int], np.ndarray] = {}
 
         # Lưu thông tin hành động của bước vừa thực hiện (để ghi log và theo dõi)
         self.last_action_id: int = 0
@@ -300,26 +306,93 @@ class AmbulanceDispatchEnv:
           2. Mọi slot_i trong tập đều đang chứa cuộc gọi PENDING (slots[slot_i] is not None).
         """
         slots = self.get_call_slots()
-        idle_amb_set: Set[int] = {
-            a.ambulance_id
-            for a in self.ambulances.values()
-            if a.status == AmbulanceStatus.IDLE and a.current_call_id is None
-        }
-        valid_slot_set: Set[int] = {
-            idx
+        idle_mask = sum(
+            1 << (ambulance.ambulance_id - 1)
+            for ambulance in self.ambulances.values()
+            if ambulance.status == AmbulanceStatus.IDLE
+            and ambulance.current_call_id is None
+        )
+        slot_mask = sum(
+            1 << idx
             for idx, call in enumerate(slots)
             if call is not None and call.status == CallStatus.PENDING
-        }
+        )
+        cache_key = (idle_mask, slot_mask)
+        cached_mask = self._action_mask_cache.get(cache_key)
+        if cached_mask is None:
+            mask = np.ones(len(self.potential_actions), dtype=bool)
+            for action_idx, joint_slot_action in enumerate(self.potential_actions):
+                mask[action_idx] = all(
+                    idle_mask & (1 << (ambulance_id - 1))
+                    and slot_mask & (1 << slot_idx)
+                    for ambulance_id, slot_idx in joint_slot_action
+                )
+            self._action_mask_cache[cache_key] = mask
+            cached_mask = mask
+        return cached_mask.copy()
 
-        mask = np.zeros(len(self.potential_actions), dtype=bool)
-        for action_idx, joint_slot_action in enumerate(self.potential_actions):
-            is_valid = True
-            for amb_id, slot_idx in joint_slot_action:
-                if amb_id not in idle_amb_set or slot_idx not in valid_slot_set:
-                    is_valid = False
-                    break
-            mask[action_idx] = is_valid
-        return mask
+    def _idle_reposition_candidate(self) -> Optional[Ambulance]:
+        idle = [
+            ambulance
+            for ambulance in self.ambulances.values()
+            if ambulance.status == AmbulanceStatus.IDLE
+            and ambulance.current_call_id is None
+            and not ambulance.is_repositioning
+        ]
+        center_x, center_y = self.city_map.center_coord
+        eligible: Dict[int, Tuple[float, Ambulance]] = {}
+        for index, first in enumerate(idle):
+            first_x, first_y = first.get_coord(self.city_map)
+            for second in idle[index + 1 :]:
+                second_x, second_y = second.get_coord(self.city_map)
+                if math.hypot(first_x - second_x, first_y - second_y) >= IDLE_CLUSTER_DISTANCE_KM:
+                    continue
+                first_center_distance = math.hypot(first_x - center_x, first_y - center_y)
+                second_center_distance = math.hypot(second_x - center_x, second_y - center_y)
+                if first_center_distance > CITY_CENTER_COVERAGE_RADIUS_KM:
+                    eligible[first.ambulance_id] = (first_center_distance, first)
+                if second_center_distance > CITY_CENTER_COVERAGE_RADIUS_KM:
+                    eligible[second.ambulance_id] = (second_center_distance, second)
+        if not eligible:
+            return None
+        _, ambulance = max(
+            eligible.values(),
+            key=lambda item: (item[0], -item[1].ambulance_id),
+        )
+        return ambulance
+
+    def can_reposition_idle_ambulance(self) -> bool:
+        """Check whether clustered idle coverage leaves a unit that can move toward downtown."""
+        return self._idle_reposition_candidate() is not None
+
+    def request_idle_reposition(self) -> bool:
+        """Start a physical, minute-by-minute reposition toward the central hub."""
+        ambulance = self._idle_reposition_candidate()
+        if ambulance is None or self.pending_calls:
+            return False
+
+        center_node = CITY_CENTER_NODE_ID
+        routes = []
+        for edge_key in self.city_map.edges:
+            if edge_key[0] != center_node:
+                continue
+            route = self.city_map.route_from_road_to_road(
+                start_edge=ambulance.current_edge,
+                start_dist=ambulance.distance_from_start,
+                dest_edge=edge_key,
+                dest_dist=0.0,
+                by_travel_time=True,
+            )
+            routes.append((float(route["total_time_minutes"]), edge_key, route))
+        if not routes:
+            raise RuntimeError("City map has no road leaving the central hub")
+        _, target_edge, route = min(routes, key=lambda item: (item[0], item[1]))
+        ambulance.start_idle_reposition(
+            route_edges=list(route["edges_path"]),
+            target_edge=target_edge,
+            target_dist=0.0,
+        )
+        return True
 
     def is_action_valid(
         self,
@@ -574,6 +647,7 @@ class AmbulanceDispatchEnv:
             "episode": self.episode_count,
             "current_minute": self.current_minute,
             "traffic_time_step": self.traffic_time_step,
+            "city_center_coord": self.city_map.center_coord,
             "edge_congestion_vector": edge_congestion_vector,
             "call_slots": slot_obs,
             "action_mask": self.get_action_mask(),
@@ -672,6 +746,96 @@ class AmbulanceDispatchEnv:
             new_calls.append(call)
 
         return new_calls
+
+    def _reroute_to_pending_calls(self) -> List[Dict[str, float]]:
+        """Reassign an en-route unit only when its old call stays covered on time."""
+        dispatch_forecasts: List[Dict[str, float]] = []
+        pending_calls = sorted(
+            self.pending_calls,
+            key=lambda call: (-call.severity, call.deadline, call.call_id),
+        )
+        rerouted_ambulances: Set[int] = set()
+        for new_call in pending_calls:
+            if new_call.status != CallStatus.PENDING:
+                continue
+            for ambulance in sorted(
+                self.ambulances.values(), key=lambda item: item.ambulance_id
+            ):
+                if (
+                    ambulance.status != AmbulanceStatus.EN_ROUTE_TO_CALL
+                    or ambulance.current_call_id is None
+                    or ambulance.ambulance_id in rerouted_ambulances
+                ):
+                    continue
+                current_call = self.calls.get(ambulance.current_call_id)
+                if (
+                    current_call is None
+                    or current_call.status != CallStatus.WAITING_FOR_AMBULANCE
+                ):
+                    continue
+
+                current_eta = self.city_map.route_from_road_to_road(
+                    start_edge=ambulance.current_edge,
+                    start_dist=ambulance.distance_from_start,
+                    dest_edge=current_call.edge,
+                    dest_dist=current_call.distance_from_start,
+                    by_travel_time=True,
+                )["total_time_minutes"]
+                new_eta = self.city_map.route_from_road_to_road(
+                    start_edge=ambulance.current_edge,
+                    start_dist=ambulance.distance_from_start,
+                    dest_edge=new_call.edge,
+                    dest_dist=new_call.distance_from_start,
+                    by_travel_time=True,
+                )["total_time_minutes"]
+                closer_by_threshold = (
+                    current_eta > 0.0 and new_eta <= 0.75 * current_eta
+                )
+                higher_priority = new_call.severity > current_call.severity
+                new_deadline_remaining = new_call.deadline - self.current_minute
+                if (
+                    not (closer_by_threshold or higher_priority)
+                    or new_eta > new_deadline_remaining
+                ):
+                    continue
+
+                replacements = []
+                for replacement in self.ambulances.values():
+                    if (
+                        replacement.status != AmbulanceStatus.IDLE
+                        or replacement.current_call_id is not None
+                    ):
+                        continue
+                    replacement_eta = self.city_map.route_from_road_to_road(
+                        start_edge=replacement.current_edge,
+                        start_dist=replacement.distance_from_start,
+                        dest_edge=current_call.edge,
+                        dest_dist=current_call.distance_from_start,
+                        by_travel_time=True,
+                    )["total_time_minutes"]
+                    if replacement_eta <= current_call.deadline - self.current_minute:
+                        replacements.append((replacement_eta, replacement.ambulance_id, replacement))
+                if not replacements:
+                    continue
+
+                _, _, replacement = min(replacements, key=lambda item: (item[0], item[1]))
+                current_call.status = CallStatus.PENDING
+                current_call.assigned_ambulance_id = None
+                ambulance.abort_mission_to_idle()
+                replacement.dispatch_to_call(current_call, self.city_map)
+                ambulance.dispatch_to_call(new_call, self.city_map)
+                ambulance.reroute_count += 1
+                ambulance.last_rerouted_this_step = True
+                rerouted_ambulances.add(ambulance.ambulance_id)
+                dispatch_forecasts.append(
+                    {
+                        "eta": float(new_eta),
+                        "deadline_remaining": float(new_deadline_remaining),
+                    }
+                )
+                break
+
+        return dispatch_forecasts
 
     def step(
         self,
@@ -782,6 +946,7 @@ class AmbulanceDispatchEnv:
             if c.status in (CallStatus.PENDING, CallStatus.WAITING_FOR_AMBULANCE)
         ]
 
+        wait_minutes = 0.0
         for amb in self.ambulances.values():
             amb.step_continuous(
                 dt_minute=1.0,
@@ -802,11 +967,13 @@ class AmbulanceDispatchEnv:
                 # Thời gian thực sự chờ trong bước là \Delta W_{c,t} = t_arrival - t0
                 delta_w = max(0.0, min(1.0, call.arrived_at_scene_time - t0))
                 call.wait_time += delta_w
+                wait_minutes += delta_w
                 wait_penalty += w_c * delta_w
             else:
                 # Xe chưa đến hiện trường trong khoảng [t0, t0 + 1): chờ trọn 1.0 phút
                 delta_w = 1.0
                 call.update_wait_time(delta_w)
+                wait_minutes += delta_w
                 wait_penalty += w_c * delta_w
 
                 if call.status == CallStatus.FAILED or call.check_failure(current_time=t0 + 1.0):
@@ -824,11 +991,15 @@ class AmbulanceDispatchEnv:
 
         # Kiểm tra phần thưởng b_c cho các cuộc gọi vừa hoàn thành trong bước (C_t)
         completion_bonus = 0.0
+        completed_calls: List[Dict[str, Any]] = []
         for call in self.calls.values():
             if call.status == CallStatus.COMPLETED and not call.completion_rewarded:
                 call.completion_rewarded = True
                 self.calls_completed_this_step.append(call)
                 self.served_calls_count += 1
+                completed_calls.append(
+                    {"severity": call.severity, "is_perfect": call.is_perfect}
+                )
                 if call.is_perfect:
                     self.perfect_calls_count += 1
                     b_c = REWARD_CONFIG[call.severity]["perfect_reward"]
@@ -855,6 +1026,7 @@ class AmbulanceDispatchEnv:
         # Sinh cuộc gọi mới tại đầu phút t+1 (các cuộc gọi bị từ chối cũng thuộc F_t)
         new_calls = self._generate_new_calls()
         self.calls_generated_this_step = new_calls
+        rerouted_dispatches = self._reroute_to_pending_calls()
 
         # --------------------------------------------------------------------
         # 7. TÍNH PHẦN THƯỞNG r_t THEO CÔNG THỨC CHUẨN:
@@ -907,6 +1079,10 @@ class AmbulanceDispatchEnv:
             "served": self.served_calls_count,
             "failed": self.failed_calls_count,
             "perfect": self.perfect_calls_count,
+            "wait_minutes": wait_minutes,
+            "failed_call_count": len(self.calls_failed_this_step),
+            "completed_calls": completed_calls,
+            "rerouted_dispatches": rerouted_dispatches,
             "step_reward": step_reward,
             "total_reward": self.total_reward,
             "reward_breakdown": dict(self.last_reward_breakdown),
