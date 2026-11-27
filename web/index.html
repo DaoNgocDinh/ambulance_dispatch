@@ -125,17 +125,30 @@
         </div>
 
         <div class="toolbar-group map-tools">
+          <div class="map-theme-pill-group" style="display:flex; align-items:center; gap:5px;">
+            <span class="label" style="font-size: 11px;">🎨 Nền đồ thị:</span>
+            <select id="map-canvas-theme" class="mini-select" title="Đổi màu nền sáng riêng cho khu vực đồ thị">
+              <option value="sky-blue" selected>🌊 Xanh Da Trời</option>
+              <option value="mint-green">🌿 Xanh Lá Cây</option>
+              <option value="slate-light">☀️ Sáng Dịu (Slate)</option>
+              <option value="dark">🌙 Ban Đêm (Tối)</option>
+            </select>
+          </div>
           <button id="btn-toggle-legend" class="mini-btn active" title="Bật/Tắt bảng Chú thích bản đồ">🗺️ Chú thích</button>
           <button id="btn-zoom-in" class="mini-btn" title="Phóng to">+</button>
           <button id="btn-zoom-out" class="mini-btn" title="Thu nhỏ">-</button>
           <button id="btn-zoom-fit" class="mini-btn" title="Vừa màn hình">⛶ Vừa</button>
-          <button id="btn-fullscreen" class="mini-btn" title="Bật/Tắt chế độ Toàn màn hình (F11 hoặc bấm nút)">⛶ Toàn màn hình</button>
+          <button id="btn-fullscreen" class="mini-btn" title="Bật/Tắt chế độ Toàn màn hình (Phím F hoặc F11)">⛶ Toàn màn hình</button>
+          <button id="btn-toggle-sidebar" class="mini-btn active" title="Bật/Tắt hiển thị cột thông tin bên phải (Phím B)">📋 Cột phải: Bật</button>
         </div>
       </div>
 
       <!-- Canvas Wrapper -->
       <div class="canvas-wrapper" id="canvas-wrapper">
         <canvas id="map-canvas"></canvas>
+
+        <!-- Floating Sidebar Edge Collapse Button -->
+        <button id="btn-sidebar-collapse" class="sidebar-edge-toggle" title="Ẩn/Hiện cột thông tin bên phải (Phím B)">›</button>
 
         <!-- Floating Map Legend -->
         <div class="map-legend" id="map-legend">

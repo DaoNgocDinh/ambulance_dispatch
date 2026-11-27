@@ -17,6 +17,8 @@ const state = {
   clickedEntity: null,
   soundEnabled: true,
   logFilter: 'all',
+  mapCanvasTheme: localStorage.getItem('ambulance_map_canvas_theme') || 'sky-blue',
+  sidebarCollapsed: localStorage.getItem('ambulance_sidebar_collapsed') === 'true',
 
   // Viewport / Camera Transform
   view: {
@@ -120,6 +122,10 @@ const dom = {
   btnZoomFit: document.getElementById('btn-zoom-fit'),
   btnFullscreen: document.getElementById('btn-fullscreen'),
   btnFullscreenHeader: document.getElementById('btn-fullscreen-header'),
+  btnToggleSidebar: document.getElementById('btn-toggle-sidebar'),
+  btnSidebarCollapse: document.getElementById('btn-sidebar-collapse'),
+  mapCanvasTheme: document.getElementById('map-canvas-theme'),
+  sidebarSection: document.querySelector('.sidebar-section'),
 
   // Mode & Policy
   algoSelect: document.getElementById('algo-select'),
@@ -331,10 +337,21 @@ function drawScene() {
   drawAmbulances();
 }
 
+function getMapThemeMode() {
+  return state.mapCanvasTheme || 'sky-blue';
+}
+
+function isMapBright() {
+  const t = getMapThemeMode();
+  return t !== 'dark' || document.body.classList.contains('light-theme');
+}
+
 function drawRoadNetwork() {
   const edges = state.mapData.edges;
   const congestionMap = state.simState.edge_congestion || {};
   const isHoveredEdge = state.hoveredEntity && state.hoveredEntity.type === 'edge';
+  const isBright = isMapBright();
+  const mapTheme = getMapThemeMode();
 
   edges.forEach((edge) => {
     const uPos = worldToScreen(edge.x1, edge.y1);
@@ -356,12 +373,28 @@ function drawRoadNetwork() {
     const endX = vPos.x + nx * laneOffset;
     const endY = vPos.y + ny * laneOffset;
 
-    // Congestion color
+    // Congestion color based on map theme
     const cong = congestionMap[edge.edge_id] || edge.congestion;
-    const isLight = document.body.classList.contains('light-theme');
-    let color = isLight ? '#059669' : '#10b981'; // Green (rich emerald in light, neon in dark)
-    if (cong === 2) color = isLight ? '#d97706' : '#f59e0b'; // Amber
-    if (cong === 3) color = isLight ? '#dc2626' : '#ef4444'; // Red
+    let color = '#10b981'; // Green default
+
+    if (isBright) {
+      if (mapTheme === 'mint-green') {
+        color = '#047857'; // Deep emerald
+        if (cong === 2) color = '#d97706'; // Amber
+        if (cong === 3) color = '#dc2626'; // Red
+      } else if (mapTheme === 'sky-blue') {
+        color = '#0284c7'; // Rich sky cyan / ocean
+        if (cong === 2) color = '#d97706'; // Amber
+        if (cong === 3) color = '#dc2626'; // Red
+      } else {
+        color = '#059669'; // Slate light
+        if (cong === 2) color = '#d97706';
+        if (cong === 3) color = '#dc2626';
+      }
+    } else {
+      if (cong === 2) color = '#f59e0b';
+      if (cong === 3) color = '#ef4444';
+    }
 
     const isHovered = isHoveredEdge && state.hoveredEntity.data.edge_id === edge.edge_id;
 
@@ -369,13 +402,13 @@ function drawRoadNetwork() {
     ctx.beginPath();
     ctx.moveTo(startX, startY);
     ctx.lineTo(endX, endY);
-    ctx.strokeStyle = isHovered ? (isLight ? '#1d4ed8' : '#60a5fa') : color;
-    ctx.lineWidth = isHovered ? 4.5 : (isLight ? 2.8 : 2.5);
+    ctx.strokeStyle = isHovered ? (isBright ? '#1d4ed8' : '#60a5fa') : color;
+    ctx.lineWidth = isHovered ? 4.5 : (isBright ? 2.8 : 2.5);
     ctx.lineCap = 'round';
     ctx.shadowColor = isHovered
-      ? (isLight ? 'rgba(37,99,235,0.35)' : '#3b82f6')
-      : (cong === 3 ? (isLight ? 'rgba(220,38,38,0.25)' : 'rgba(239, 68, 68, 0.4)') : 'transparent');
-    ctx.shadowBlur = isHovered ? (isLight ? 8 : 10) : (cong === 3 ? (isLight ? 4 : 6) : 0);
+      ? (isBright ? 'rgba(37,99,235,0.35)' : '#3b82f6')
+      : (cong === 3 ? (isBright ? 'rgba(220,38,38,0.25)' : 'rgba(239, 68, 68, 0.4)') : 'transparent');
+    ctx.shadowBlur = isHovered ? (isBright ? 8 : 10) : (cong === 3 ? (isBright ? 4 : 6) : 0);
     ctx.stroke();
 
     // Directional Arrow along the lane
@@ -397,7 +430,7 @@ function drawRoadNetwork() {
         ay - arrowSize * Math.sin(angle + Math.PI / 6)
       );
       ctx.closePath();
-      ctx.fillStyle = isHovered ? (isLight ? '#1d4ed8' : '#93c5fd') : color;
+      ctx.fillStyle = isHovered ? (isBright ? '#1d4ed8' : '#93c5fd') : color;
       ctx.fill();
     }
     ctx.restore();
@@ -407,7 +440,8 @@ function drawRoadNetwork() {
 function drawNodes() {
   const nodes = state.mapData.nodes;
   const isHoveredNode = state.hoveredEntity && state.hoveredEntity.type === 'node';
-  const isLight = document.body.classList.contains('light-theme');
+  const isBright = isMapBright();
+  const mapTheme = getMapThemeMode();
 
   nodes.forEach((node) => {
     const pos = worldToScreen(node.x, node.y);
@@ -421,33 +455,37 @@ function drawNodes() {
     ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
 
     if (isHovered) {
-      ctx.fillStyle = isLight ? '#2563eb' : '#60a5fa';
-      ctx.shadowColor = isLight ? 'rgba(37, 99, 235, 0.4)' : '#3b82f6';
+      ctx.fillStyle = isBright ? '#2563eb' : '#60a5fa';
+      ctx.shadowColor = isBright ? 'rgba(37, 99, 235, 0.4)' : '#3b82f6';
       ctx.shadowBlur = 10;
     } else if (isCentral) {
-      ctx.fillStyle = isLight ? '#7c3aed' : '#8b5cf6';
-      ctx.shadowColor = isLight ? 'rgba(124, 58, 237, 0.35)' : 'rgba(139, 92, 246, 0.6)';
+      ctx.fillStyle = isBright ? (mapTheme === 'mint-green' ? '#15803d' : '#7c3aed') : '#8b5cf6';
+      ctx.shadowColor = isBright ? 'rgba(124, 58, 237, 0.35)' : 'rgba(139, 92, 246, 0.6)';
       ctx.shadowBlur = 6;
     } else {
-      ctx.fillStyle = isLight ? '#475569' : '#334155';
+      if (isBright) {
+        if (mapTheme === 'sky-blue') ctx.fillStyle = '#1e3a8a';
+        else if (mapTheme === 'mint-green') ctx.fillStyle = '#064e3b';
+        else ctx.fillStyle = '#334155';
+      } else {
+        ctx.fillStyle = '#334155';
+      }
     }
 
     ctx.fill();
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = isCentral ? (isLight ? '#9333ea' : '#c084fc') : (isLight ? '#94a3b8' : '#64748b');
+    ctx.strokeStyle = isCentral ? (isBright ? '#9333ea' : '#c084fc') : (isBright ? '#94a3b8' : '#64748b');
     ctx.stroke();
 
     // Node label if zoom is sufficient
     if (state.view.zoom > 0.8 || isCentral || isHovered) {
-      ctx.fillStyle = isLight
-        ? (isCentral ? '#581c87' : '#0f172a')
-        : (isCentral ? '#f3e8ff' : '#94a3b8');
+      ctx.fillStyle = isBright ? '#0f172a' : (isCentral ? '#f3e8ff' : '#94a3b8');
       ctx.font = `bold ${Math.max(9, Math.round(10 * state.view.zoom))}px 'JetBrains Mono', monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      if (isLight) {
-        ctx.shadowColor = 'rgba(255, 255, 255, 0.85)';
-        ctx.shadowBlur = 3;
+      if (isBright) {
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.9)';
+        ctx.shadowBlur = 4;
       }
       ctx.fillText(node.id, pos.x, pos.y - radius - 7);
     }
@@ -458,7 +496,7 @@ function drawNodes() {
 function drawHospitals() {
   const hospitals = state.mapData.hospitals;
   const isHoveredHosp = state.hoveredEntity && state.hoveredEntity.type === 'hospital';
-  const isLight = document.body.classList.contains('light-theme');
+  const isLight = isMapBright();
 
   hospitals.forEach((hosp) => {
     const pos = worldToScreen(hosp.coord[0], hosp.coord[1]);
@@ -490,7 +528,7 @@ function drawHospitals() {
     ctx.font = `bold ${Math.max(10, Math.round(11 * state.view.zoom))}px Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.shadowColor = isLight ? 'rgba(255, 255, 255, 0.9)' : '#000';
+    ctx.shadowColor = isLight ? 'rgba(255, 255, 255, 0.95)' : '#000';
     ctx.shadowBlur = 4;
     ctx.fillText(`BV ${hosp.hospital_id}`, pos.x, pos.y + size / 2 + 3);
     ctx.restore();
@@ -500,7 +538,7 @@ function drawHospitals() {
 function drawCalls() {
   const calls = state.simState.calls || [];
   const pulse = (Math.sin(state.animTime / 180) + 1) / 2; // 0..1 pulse
-  const isLight = document.body.classList.contains('light-theme');
+  const isLight = isMapBright();
 
   calls.forEach((call) => {
     // Only draw active calls (pending, waiting, at_scene)
@@ -652,7 +690,7 @@ function drawAmbulances() {
     ctx.fillText('🚑', pos.x, pos.y - 1);
 
     // Ambulance Number tag
-    const isLight = document.body.classList.contains('light-theme');
+    const isLight = isMapBright();
     ctx.fillStyle = isLight ? '#0f172a' : '#ffffff';
     ctx.font = `bold ${Math.max(10, Math.round(10 * state.view.zoom))}px 'JetBrains Mono', monospace`;
     ctx.shadowColor = isLight ? 'rgba(255, 255, 255, 0.95)' : '#000';
@@ -1078,6 +1116,73 @@ function setupEventListeners() {
     });
   }
 
+  // Map Canvas Color Themes (Đổi màu sáng riêng cho khu vực đồ thị: Xanh da trời, Xanh lá cây, Sáng dịu, Tối)
+  function setMapCanvasTheme(themeName) {
+    state.mapCanvasTheme = themeName || 'sky-blue';
+    const wrapper = dom.canvasWrapper;
+    wrapper.classList.remove('map-theme-sky-blue', 'map-theme-mint-green', 'map-theme-slate-light', 'map-theme-dark');
+    wrapper.classList.add(`map-theme-${state.mapCanvasTheme}`);
+    if (dom.mapCanvasTheme && dom.mapCanvasTheme.value !== state.mapCanvasTheme) {
+      dom.mapCanvasTheme.value = state.mapCanvasTheme;
+    }
+    localStorage.setItem('ambulance_map_canvas_theme', state.mapCanvasTheme);
+  }
+
+  // Khởi tạo màu nền khu đồ thị
+  setMapCanvasTheme(state.mapCanvasTheme);
+
+  if (dom.mapCanvasTheme) {
+    dom.mapCanvasTheme.addEventListener('change', (e) => {
+      setMapCanvasTheme(e.target.value);
+    });
+  }
+
+  // Right Sidebar Toggle (Bật / Tắt hiển thị cột thông tin bên phải)
+  function toggleSidebar(forceState) {
+    if (forceState !== undefined) {
+      state.sidebarCollapsed = !forceState;
+    } else {
+      state.sidebarCollapsed = !state.sidebarCollapsed;
+    }
+
+    if (state.sidebarCollapsed) {
+      if (dom.sidebarSection) dom.sidebarSection.classList.add('collapsed');
+      if (dom.btnToggleSidebar) {
+        dom.btnToggleSidebar.textContent = '📋 Cột phải: Tắt';
+        dom.btnToggleSidebar.classList.remove('active');
+      }
+      if (dom.btnSidebarCollapse) {
+        dom.btnSidebarCollapse.textContent = '‹';
+        dom.btnSidebarCollapse.title = 'Hiện cột thông tin bên phải (Phím B)';
+      }
+    } else {
+      if (dom.sidebarSection) dom.sidebarSection.classList.remove('collapsed');
+      if (dom.btnToggleSidebar) {
+        dom.btnToggleSidebar.textContent = '📋 Cột phải: Bật';
+        dom.btnToggleSidebar.classList.add('active');
+      }
+      if (dom.btnSidebarCollapse) {
+        dom.btnSidebarCollapse.textContent = '›';
+        dom.btnSidebarCollapse.title = 'Ẩn cột thông tin bên phải (Phím B)';
+      }
+    }
+    localStorage.setItem('ambulance_sidebar_collapsed', state.sidebarCollapsed);
+    setTimeout(() => {
+      resizeCanvas();
+      fitMapToCanvas();
+    }, 160);
+  }
+
+  // Khởi tạo trạng thái cột bên phải từ localStorage
+  toggleSidebar(!state.sidebarCollapsed);
+
+  if (dom.btnToggleSidebar) {
+    dom.btnToggleSidebar.addEventListener('click', () => toggleSidebar());
+  }
+  if (dom.btnSidebarCollapse) {
+    dom.btnSidebarCollapse.addEventListener('click', () => toggleSidebar());
+  }
+
   // Export Log
   dom.btnExportLog.addEventListener('click', () => {
     window.open('/api/log_export', '_blank');
@@ -1418,9 +1523,9 @@ function setupEventListeners() {
     });
   }
 
-  // Keyboard Shortcuts (Space for Play/Pause, Arrow Right for Step)
+  // Keyboard Shortcuts (Space for Play/Pause, Arrow Right for Step, F for Fullscreen, B for Sidebar)
   window.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
     if (e.code === 'Space') {
       e.preventDefault();
       togglePlayback();
@@ -1430,6 +1535,9 @@ function setupEventListeners() {
     } else if (e.key === 'f' || e.key === 'F') {
       e.preventDefault();
       toggleFullScreen();
+    } else if (e.key === 'b' || e.key === 'B') {
+      e.preventDefault();
+      toggleSidebar();
     }
   });
 }

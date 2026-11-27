@@ -1231,6 +1231,81 @@ body.dark-theme {
   overflow-y: auto;
 }
 
+/* Mini Select in map toolbar */
+.mini-select {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: #f1f5f9;
+  font-family: var(--font-main);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.mini-select:hover, .mini-select:focus {
+  border-color: #3b82f6;
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.mini-select option {
+  background: #101622;
+  color: #f1f5f9;
+}
+
+/* Floating Sidebar Edge Collapse Button */
+.sidebar-edge-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 52px;
+  background: rgba(16, 22, 34, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 45;
+  transition: all 0.2s ease;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.4);
+  font-size: 15px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.sidebar-edge-toggle:hover {
+  background: var(--primary);
+  color: #ffffff;
+  width: 28px;
+  box-shadow: -2px 0 14px rgba(59, 130, 246, 0.5);
+}
+
+/* Map Canvas Specific Color Themes (Chỉ sáng riêng ở khu vực đồ thị) */
+.canvas-wrapper.map-theme-sky-blue {
+  background-color: #dbeafe !important;
+}
+
+.canvas-wrapper.map-theme-mint-green {
+  background-color: #e6f7ef !important;
+}
+
+.canvas-wrapper.map-theme-slate-light {
+  background-color: #e9eef5 !important;
+}
+
+.canvas-wrapper.map-theme-dark {
+  background-color: #07090e !important;
+}
+
 /* =========================================================================
    SIDEBAR SECTION (RIGHT)
    ========================================================================= */
@@ -1242,7 +1317,16 @@ body.dark-theme {
   flex-direction: column;
   flex-shrink: 0;
   overflow: hidden;
-  transition: background 0.3s ease, border-color 0.3s ease;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease, background 0.3s ease, border-color 0.3s ease;
+}
+
+.sidebar-section.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  border-left: none !important;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
 }
 
 .sidebar-tabs {
