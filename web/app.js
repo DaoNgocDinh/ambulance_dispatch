@@ -103,6 +103,9 @@ const dom = {
   btnReset: document.getElementById('btn-reset'),
   speedSlider: document.getElementById('speed-slider'),
   speedValText: document.getElementById('speed-val-text'),
+  btnThemeToggle: document.getElementById('btn-theme-toggle'),
+  themeIcon: document.getElementById('theme-icon'),
+  themeLabel: document.getElementById('theme-label'),
   btnSound: document.getElementById('btn-sound'),
   soundIcon: document.getElementById('sound-icon'),
   btnExportLog: document.getElementById('btn-export-log'),
@@ -430,8 +433,11 @@ function drawNodes() {
 
     // Node label if zoom is sufficient
     if (state.view.zoom > 0.8 || isCentral || isHovered) {
-      ctx.fillStyle = isCentral ? '#f3e8ff' : '#94a3b8';
-      ctx.font = `${Math.max(9, Math.round(10 * state.view.zoom))}px 'JetBrains Mono', monospace`;
+      const isLight = document.body.classList.contains('light-theme');
+      ctx.fillStyle = isLight
+        ? (isCentral ? '#6b21a8' : '#0f172a')
+        : (isCentral ? '#f3e8ff' : '#94a3b8');
+      ctx.font = `bold ${Math.max(9, Math.round(10 * state.view.zoom))}px 'JetBrains Mono', monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(node.id, pos.x, pos.y - radius - 7);
@@ -1027,6 +1033,38 @@ function setupEventListeners() {
     state.soundEnabled = !state.soundEnabled;
     dom.soundIcon.textContent = state.soundEnabled ? '🔊' : '🔇';
   });
+
+  // Dark / Light Theme Mode Toggle
+  function setThemeMode(isLight) {
+    if (isLight) {
+      document.body.classList.remove('dark-theme');
+      document.body.classList.add('light-theme');
+      if (dom.themeIcon) dom.themeIcon.textContent = '🌙';
+      if (dom.themeLabel) dom.themeLabel.textContent = 'Tối';
+      localStorage.setItem('ambulance_theme_mode', 'light');
+    } else {
+      document.body.classList.remove('light-theme');
+      document.body.classList.add('dark-theme');
+      if (dom.themeIcon) dom.themeIcon.textContent = '☀️';
+      if (dom.themeLabel) dom.themeLabel.textContent = 'Sáng';
+      localStorage.setItem('ambulance_theme_mode', 'dark');
+    }
+  }
+
+  // Khởi tạo theme từ localStorage
+  const savedTheme = localStorage.getItem('ambulance_theme_mode');
+  if (savedTheme === 'light') {
+    setThemeMode(true);
+  } else {
+    setThemeMode(false);
+  }
+
+  if (dom.btnThemeToggle) {
+    dom.btnThemeToggle.addEventListener('click', () => {
+      const isCurrentlyLight = document.body.classList.contains('light-theme');
+      setThemeMode(!isCurrentlyLight);
+    });
+  }
 
   // Export Log
   dom.btnExportLog.addEventListener('click', () => {
