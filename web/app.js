@@ -356,9 +356,10 @@ function drawRoadNetwork() {
 
     // Congestion color
     const cong = congestionMap[edge.edge_id] || edge.congestion;
-    let color = '#10b981'; // Green
-    if (cong === 2) color = '#f59e0b'; // Amber
-    if (cong === 3) color = '#ef4444'; // Red
+    const isLight = document.body.classList.contains('light-theme');
+    let color = isLight ? '#059669' : '#10b981'; // Green (rich emerald in light, neon in dark)
+    if (cong === 2) color = isLight ? '#d97706' : '#f59e0b'; // Amber
+    if (cong === 3) color = isLight ? '#dc2626' : '#ef4444'; // Red
 
     const isHovered = isHoveredEdge && state.hoveredEntity.data.edge_id === edge.edge_id;
 
@@ -366,11 +367,13 @@ function drawRoadNetwork() {
     ctx.beginPath();
     ctx.moveTo(startX, startY);
     ctx.lineTo(endX, endY);
-    ctx.strokeStyle = isHovered ? '#60a5fa' : color;
-    ctx.lineWidth = isHovered ? 4.5 : 2.5;
+    ctx.strokeStyle = isHovered ? (isLight ? '#1d4ed8' : '#60a5fa') : color;
+    ctx.lineWidth = isHovered ? 4.5 : (isLight ? 2.8 : 2.5);
     ctx.lineCap = 'round';
-    ctx.shadowColor = isHovered ? '#3b82f6' : (cong === 3 ? 'rgba(239, 68, 68, 0.4)' : 'transparent');
-    ctx.shadowBlur = isHovered ? 10 : (cong === 3 ? 6 : 0);
+    ctx.shadowColor = isHovered
+      ? (isLight ? 'rgba(37,99,235,0.35)' : '#3b82f6')
+      : (cong === 3 ? (isLight ? 'rgba(220,38,38,0.25)' : 'rgba(239, 68, 68, 0.4)') : 'transparent');
+    ctx.shadowBlur = isHovered ? (isLight ? 8 : 10) : (cong === 3 ? (isLight ? 4 : 6) : 0);
     ctx.stroke();
 
     // Directional Arrow along the lane
@@ -392,7 +395,7 @@ function drawRoadNetwork() {
         ay - arrowSize * Math.sin(angle + Math.PI / 6)
       );
       ctx.closePath();
-      ctx.fillStyle = isHovered ? '#93c5fd' : color;
+      ctx.fillStyle = isHovered ? (isLight ? '#1d4ed8' : '#93c5fd') : color;
       ctx.fill();
     }
     ctx.restore();
@@ -402,6 +405,7 @@ function drawRoadNetwork() {
 function drawNodes() {
   const nodes = state.mapData.nodes;
   const isHoveredNode = state.hoveredEntity && state.hoveredEntity.type === 'node';
+  const isLight = document.body.classList.contains('light-theme');
 
   nodes.forEach((node) => {
     const pos = worldToScreen(node.x, node.y);
@@ -415,31 +419,34 @@ function drawNodes() {
     ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
 
     if (isHovered) {
-      ctx.fillStyle = '#60a5fa';
-      ctx.shadowColor = '#3b82f6';
-      ctx.shadowBlur = 12;
+      ctx.fillStyle = isLight ? '#2563eb' : '#60a5fa';
+      ctx.shadowColor = isLight ? 'rgba(37, 99, 235, 0.4)' : '#3b82f6';
+      ctx.shadowBlur = 10;
     } else if (isCentral) {
-      ctx.fillStyle = '#8b5cf6';
-      ctx.shadowColor = 'rgba(139, 92, 246, 0.6)';
+      ctx.fillStyle = isLight ? '#7c3aed' : '#8b5cf6';
+      ctx.shadowColor = isLight ? 'rgba(124, 58, 237, 0.35)' : 'rgba(139, 92, 246, 0.6)';
       ctx.shadowBlur = 6;
     } else {
-      ctx.fillStyle = '#334155';
+      ctx.fillStyle = isLight ? '#475569' : '#334155';
     }
 
     ctx.fill();
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = isCentral ? '#c084fc' : '#64748b';
+    ctx.strokeStyle = isCentral ? (isLight ? '#9333ea' : '#c084fc') : (isLight ? '#94a3b8' : '#64748b');
     ctx.stroke();
 
     // Node label if zoom is sufficient
     if (state.view.zoom > 0.8 || isCentral || isHovered) {
-      const isLight = document.body.classList.contains('light-theme');
       ctx.fillStyle = isLight
-        ? (isCentral ? '#6b21a8' : '#0f172a')
+        ? (isCentral ? '#581c87' : '#0f172a')
         : (isCentral ? '#f3e8ff' : '#94a3b8');
       ctx.font = `bold ${Math.max(9, Math.round(10 * state.view.zoom))}px 'JetBrains Mono', monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      if (isLight) {
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.85)';
+        ctx.shadowBlur = 3;
+      }
       ctx.fillText(node.id, pos.x, pos.y - radius - 7);
     }
     ctx.restore();
@@ -449,6 +456,7 @@ function drawNodes() {
 function drawHospitals() {
   const hospitals = state.mapData.hospitals;
   const isHoveredHosp = state.hoveredEntity && state.hoveredEntity.type === 'hospital';
+  const isLight = document.body.classList.contains('light-theme');
 
   hospitals.forEach((hosp) => {
     const pos = worldToScreen(hosp.coord[0], hosp.coord[1]);
@@ -461,7 +469,7 @@ function drawHospitals() {
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, size / 2, 0, Math.PI * 2);
     ctx.fillStyle = isHovered ? '#dc2626' : '#ef4444';
-    ctx.shadowColor = 'rgba(239, 68, 68, 0.8)';
+    ctx.shadowColor = isLight ? 'rgba(239, 68, 68, 0.4)' : 'rgba(239, 68, 68, 0.8)';
     ctx.shadowBlur = 10;
     ctx.fill();
     ctx.lineWidth = 2;
@@ -476,11 +484,11 @@ function drawHospitals() {
     ctx.fillRect(pos.x - crossL / 2, pos.y - crossW / 2, crossL, crossW);
 
     // Label
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = isLight ? '#991b1b' : '#ffffff';
     ctx.font = `bold ${Math.max(10, Math.round(11 * state.view.zoom))}px Inter, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.shadowColor = '#000';
+    ctx.shadowColor = isLight ? 'rgba(255, 255, 255, 0.9)' : '#000';
     ctx.shadowBlur = 4;
     ctx.fillText(`BV ${hosp.hospital_id}`, pos.x, pos.y + size / 2 + 3);
     ctx.restore();
@@ -490,6 +498,7 @@ function drawHospitals() {
 function drawCalls() {
   const calls = state.simState.calls || [];
   const pulse = (Math.sin(state.animTime / 180) + 1) / 2; // 0..1 pulse
+  const isLight = document.body.classList.contains('light-theme');
 
   calls.forEach((call) => {
     // Only draw active calls (pending, waiting, at_scene)
@@ -498,9 +507,9 @@ function drawCalls() {
     const pos = worldToScreen(call.coord[0], call.coord[1]);
     const isPending = call.status === 'Yêu cầu xử lý';
 
-    let sevColor = '#fbbf24'; // Level 1
-    if (call.severity === 2) sevColor = '#fb923c'; // Level 2
-    if (call.severity === 3) sevColor = '#ef4444'; // Level 3
+    let sevColor = isLight ? '#d97706' : '#fbbf24'; // Level 1
+    if (call.severity === 2) sevColor = isLight ? '#ea580c' : '#fb923c'; // Level 2
+    if (call.severity === 3) sevColor = isLight ? '#dc2626' : '#ef4444'; // Level 3
 
     ctx.save();
 
@@ -521,15 +530,15 @@ function drawCalls() {
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, baseRadius, 0, Math.PI * 2);
     ctx.fillStyle = sevColor;
-    ctx.shadowColor = sevColor;
-    ctx.shadowBlur = 12;
+    ctx.shadowColor = isLight ? 'rgba(0,0,0,0.1)' : sevColor;
+    ctx.shadowBlur = isLight ? 4 : 12;
     ctx.fill();
     ctx.lineWidth = 2;
     ctx.strokeStyle = '#fff';
     ctx.stroke();
 
     // Text: Severity or Call ID
-    ctx.fillStyle = '#0f172a';
+    ctx.fillStyle = '#ffffff';
     ctx.font = `bold ${Math.max(9, Math.round(10 * state.view.zoom))}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -537,9 +546,9 @@ function drawCalls() {
     ctx.fillText(`C${call.id}`, pos.x, pos.y);
 
     // Countdown / status pill
-    ctx.fillStyle = '#f8fafc';
-    ctx.font = `600 ${Math.max(9, Math.round(10 * state.view.zoom))}px Inter, sans-serif`;
-    ctx.shadowColor = '#000';
+    ctx.fillStyle = isLight ? '#0f172a' : '#f8fafc';
+    ctx.font = `bold ${Math.max(9, Math.round(10 * state.view.zoom))}px Inter, sans-serif`;
+    ctx.shadowColor = isLight ? 'rgba(255, 255, 255, 0.9)' : '#000';
     ctx.shadowBlur = 4;
     const tag = isPending ? `⏳${call.time_to_deadline}p` : `🚑 #${call.assigned_ambulance_id || ''}`;
     ctx.fillText(tag, pos.x, pos.y - baseRadius - 6);
@@ -641,10 +650,11 @@ function drawAmbulances() {
     ctx.fillText('🚑', pos.x, pos.y - 1);
 
     // Ambulance Number tag
-    ctx.fillStyle = '#ffffff';
+    const isLight = document.body.classList.contains('light-theme');
+    ctx.fillStyle = isLight ? '#0f172a' : '#ffffff';
     ctx.font = `bold ${Math.max(10, Math.round(10 * state.view.zoom))}px 'JetBrains Mono', monospace`;
-    ctx.shadowColor = '#000';
-    ctx.shadowBlur = 5;
+    ctx.shadowColor = isLight ? 'rgba(255, 255, 255, 0.95)' : '#000';
+    ctx.shadowBlur = isLight ? 3 : 5;
     ctx.fillText(`Xe ${amb.id}`, pos.x, pos.y + ambRadius + 7);
 
     ctx.restore();

@@ -61,16 +61,17 @@ body, body.theme-midnight, body.dark-theme {
   --accent: #8b5cf6;
 }
 
-/* Light Clean Theme */
+/* Light Clean / Nordic Slate Tech Theme (Sáng dịu mắt, thẩm mỹ cao) */
 body.theme-light, body.light-theme {
-  --bg-primary: #f8fafc;
+  --bg-primary: #f0f4f9;
   --bg-secondary: #ffffff;
-  --bg-card: rgba(255, 255, 255, 0.96);
-  --bg-card-hover: rgba(241, 245, 249, 0.98);
-  --bg-canvas: #edf2f7;
-  --border-color: rgba(0, 0, 0, 0.12);
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8fafc;
+  --bg-canvas: #e9eef5;
+  --border-color: #e2e8f0;
+  --border-focus: #2563eb;
   --text-main: #0f172a;
-  --text-muted: #475569;
+  --text-muted: #334155;
   --text-dim: #64748b;
   --primary: #2563eb;
   --primary-hover: #1d4ed8;
@@ -81,22 +82,27 @@ body.theme-light, body.light-theme {
 
 body.theme-light .kpi-pill,
 body.light-theme .kpi-pill {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.1);
+  background: #ffffff;
+  border-color: #e2e8f0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
 }
 
 body.theme-light .panel-box,
-body.theme-light .map-legend,
-body.theme-light .inspector-popup,
 body.theme-light .modal-card,
 body.light-theme .panel-box,
-body.light-theme .map-legend,
-body.light-theme .inspector-popup,
 body.light-theme .modal-card {
+  background: #ffffff;
+  color: #0f172a;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.06);
+  border-color: #e2e8f0;
+}
+
+body.theme-light .inspector-popup,
+body.light-theme .inspector-popup {
   background: rgba(255, 255, 255, 0.96);
   color: #0f172a;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.1);
+  border-color: #cbd5e1;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
 }
 
 body.theme-light .map-toolbar,
@@ -104,7 +110,8 @@ body.theme-light .app-header,
 body.light-theme .map-toolbar,
 body.light-theme .app-header {
   background: #ffffff;
-  border-color: rgba(0, 0, 0, 0.1);
+  border-color: #e2e8f0;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
 }
 
 body.theme-light .time-val,
@@ -116,13 +123,57 @@ body.light-theme .logo-text h1 {
 
 body.theme-light .time-card,
 body.light-theme .time-card {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.1);
+  background: #f8fafc;
+  border-color: #e2e8f0;
 }
 
 body.theme-light .progress-bar-bg,
 body.light-theme .progress-bar-bg {
-  background: rgba(0, 0, 0, 0.08);
+  background: #e2e8f0;
+}
+
+/* Map Legend in Light Mode */
+body.theme-light .map-legend,
+body.light-theme .map-legend {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid #cbd5e1;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+body.theme-light .legend-title,
+body.light-theme .legend-title {
+  color: #0f172a;
+  font-weight: 800;
+}
+
+body.theme-light .legend-group .group-title,
+body.light-theme .legend-group .group-title {
+  color: #475569;
+  font-weight: 700;
+}
+
+body.theme-light .legend-item,
+body.light-theme .legend-item {
+  color: #1e293b;
+  font-weight: 500;
+}
+
+body.theme-light .legend-header,
+body.light-theme .legend-header {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+body.theme-light .legend-close,
+body.light-theme .legend-close {
+  color: #64748b;
+}
+
+body.theme-light .legend-close:hover,
+body.light-theme .legend-close:hover {
+  color: #0f172a;
+  background: #f1f5f9;
 }
 
 /* Sidebar & Panels in Light Mode */
@@ -897,10 +948,11 @@ body.dark-theme {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: #0b0f17;
+  background-color: var(--bg-canvas, #07090e);
   position: relative;
   overflow: hidden;
   border-right: 1px solid var(--border-color);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
 }
 
 .map-toolbar {
