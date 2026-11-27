@@ -1,0 +1,815 @@
+{
+  "algorithm": "SARSA",
+  "checkpoint": "D:\\Documents\\HocTC\\ambulance_dispatch\\sarsa_g4_default_seed42.json",
+  "encoder_version": "sarsa-state-g2.5-v1",
+  "training_config": {
+    "seed": 42,
+    "episodes_completed": 100,
+    "alpha": 0.1,
+    "gamma": 0.99,
+    "epsilon_start": 1.0,
+    "epsilon_current": 0.6057704364907278,
+    "epsilon_decay": 0.995,
+    "epsilon_min": 0.05,
+    "configured_episodes": 100
+  },
+  "environment_config": {
+    "num_ambulances": 6,
+    "max_time": 360,
+    "max_overtime": 300,
+    "poisson_lambda": 0.1,
+    "max_pending_calls": 3
+  },
+  "evaluation_seeds": [
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007,
+    1008,
+    1009,
+    1010
+  ],
+  "aggregation": {
+    "std": "population standard deviation (ddof=0)"
+  },
+  "metric_definitions": {
+    "generated_calls": "len(env.calls); must reconcile with served + failed + unresolved",
+    "served_calls": "CallStatus.COMPLETED (treatment completed at scene)",
+    "failed_calls": "CallStatus.FAILED, including queue_overflow",
+    "unresolved_calls": "Only pending_calls + waiting_calls + at_scene_calls from info['backlog'] when truncated",
+    "served_rate": "served_calls / generated_calls",
+    "failed_rate": "failed_calls / generated_calls",
+    "avg_waiting": "Mean call.wait_time over all generated calls",
+    "response_time_all": "Mean arrived_at_scene_time - created_time for calls that arrived",
+    "deadline_success_rate": "Calls with arrived_at_scene_time <= deadline / generated_calls",
+    "avg_slack_at_dispatch": "Mean deadline - (dispatch current_minute + observation-derived ETA) over dispatched calls",
+    "total_distance": "Sum of final Observation ambulance total_distance_traveled",
+    "ambulance_utilization": "Post-step non-IDLE ambulance samples / (ambulance_count * steps)",
+    "reward_breakdown": "Sum of info['reward_breakdown'] over step() calls; reset reward is separate and included only in episode_return"
+  },
+  "episodes": [
+    {
+      "seed": 1001,
+      "episode_return": -2795.5,
+      "reset_reward": 0.0,
+      "steps": 415,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 665.5,
+        "failure_penalty": 2130.0,
+        "distance_penalty": 0.0,
+        "completion_bonus": 0.0,
+        "total": -2795.5
+      },
+      "step_reward_total": -2795.5,
+      "total_distance": 0.0,
+      "ambulance_utilization": 0.0,
+      "avg_slack_at_dispatch": null,
+      "total_generated_calls": 38,
+      "served_calls": 0,
+      "served_rate": 0.0,
+      "failed_calls": 38,
+      "failed_rate": 1.0,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 23.105263157894736,
+      "response_time_all": null,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.0,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 19,
+          "served": 0,
+          "failed": 19,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 12,
+          "served": 0,
+          "failed": 12,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 7,
+          "served": 0,
+          "failed": 7,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1002,
+      "episode_return": -2757.0,
+      "reset_reward": 0.0,
+      "steps": 360,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 687.0,
+        "failure_penalty": 2070.0,
+        "distance_penalty": 0.0,
+        "completion_bonus": 0.0,
+        "total": -2757.0
+      },
+      "step_reward_total": -2757.0,
+      "total_distance": 0.0,
+      "ambulance_utilization": 0.0,
+      "avg_slack_at_dispatch": null,
+      "total_generated_calls": 34,
+      "served_calls": 0,
+      "served_rate": 0.0,
+      "failed_calls": 34,
+      "failed_rate": 1.0,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 24.647058823529413,
+      "response_time_all": null,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.0,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 17,
+          "served": 0,
+          "failed": 17,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 8,
+          "served": 0,
+          "failed": 8,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 9,
+          "served": 0,
+          "failed": 9,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1003,
+      "episode_return": -2828.0,
+      "reset_reward": 0.0,
+      "steps": 414,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 758.0,
+        "failure_penalty": 2070.0,
+        "distance_penalty": 0.0,
+        "completion_bonus": 0.0,
+        "total": -2828.0
+      },
+      "step_reward_total": -2828.0,
+      "total_distance": 0.0,
+      "ambulance_utilization": 0.0,
+      "avg_slack_at_dispatch": null,
+      "total_generated_calls": 34,
+      "served_calls": 0,
+      "served_rate": 0.0,
+      "failed_calls": 34,
+      "failed_rate": 1.0,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 27.647058823529413,
+      "response_time_all": null,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.0,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 13,
+          "served": 0,
+          "failed": 13,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 14,
+          "served": 0,
+          "failed": 14,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 7,
+          "served": 0,
+          "failed": 7,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1004,
+      "episode_return": -3654.5,
+      "reset_reward": 0.0,
+      "steps": 381,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 924.5,
+        "failure_penalty": 2730.0,
+        "distance_penalty": 0.0,
+        "completion_bonus": 0.0,
+        "total": -3654.5
+      },
+      "step_reward_total": -3654.5,
+      "total_distance": 0.0,
+      "ambulance_utilization": 0.0,
+      "avg_slack_at_dispatch": null,
+      "total_generated_calls": 43,
+      "served_calls": 0,
+      "served_rate": 0.0,
+      "failed_calls": 43,
+      "failed_rate": 1.0,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 22.86046511627907,
+      "response_time_all": null,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.0,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 19,
+          "served": 0,
+          "failed": 19,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 12,
+          "served": 0,
+          "failed": 12,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 12,
+          "served": 0,
+          "failed": 12,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1005,
+      "episode_return": -2920.0,
+      "reset_reward": 0.0,
+      "steps": 400,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 640.0,
+        "failure_penalty": 2280.0,
+        "distance_penalty": 0.0,
+        "completion_bonus": 0.0,
+        "total": -2920.0
+      },
+      "step_reward_total": -2920.0,
+      "total_distance": 0.0,
+      "ambulance_utilization": 0.0,
+      "avg_slack_at_dispatch": null,
+      "total_generated_calls": 35,
+      "served_calls": 0,
+      "served_rate": 0.0,
+      "failed_calls": 35,
+      "failed_rate": 1.0,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 23.057142857142857,
+      "response_time_all": null,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.0,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 12,
+          "served": 0,
+          "failed": 12,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 14,
+          "served": 0,
+          "failed": 14,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 9,
+          "served": 0,
+          "failed": 9,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1006,
+      "episode_return": -3421.2849767501257,
+      "reset_reward": 0.0,
+      "steps": 379,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 790.0999767501266,
+        "failure_penalty": 2700.0,
+        "distance_penalty": 1.185,
+        "completion_bonus": 70.0,
+        "total": -3421.2849767501257
+      },
+      "step_reward_total": -3421.2849767501257,
+      "total_distance": 23.7,
+      "ambulance_utilization": 0.032981530343007916,
+      "avg_slack_at_dispatch": 0.46400000000000574,
+      "total_generated_calls": 37,
+      "served_calls": 1,
+      "served_rate": 0.02702702702702703,
+      "failed_calls": 36,
+      "failed_rate": 0.972972972972973,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 23.04684642793021,
+      "response_time_all": 23.733317833417715,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.02702702702702703,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 10,
+          "served": 0,
+          "failed": 10,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 12,
+          "served": 0,
+          "failed": 12,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 15,
+          "served": 1,
+          "failed": 14,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1007,
+      "episode_return": -2651.33011,
+      "reset_reward": 0.0,
+      "steps": 404,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 810.34911,
+        "failure_penalty": 1890.0,
+        "distance_penalty": 0.9809999999999997,
+        "completion_bonus": 50.0,
+        "total": -2651.33011
+      },
+      "step_reward_total": -2651.33011,
+      "total_distance": 19.62,
+      "ambulance_utilization": 0.02145214521452145,
+      "avg_slack_at_dispatch": 9.995000000000005,
+      "total_generated_calls": 30,
+      "served_calls": 1,
+      "served_rate": 0.03333333333333333,
+      "failed_calls": 29,
+      "failed_rate": 0.9666666666666667,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 30.723274,
+      "response_time_all": 41.698220000000006,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.03333333333333333,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 10,
+          "served": 1,
+          "failed": 9,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 13,
+          "served": 0,
+          "failed": 13,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 7,
+          "served": 0,
+          "failed": 7,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1008,
+      "episode_return": -2194.5,
+      "reset_reward": 0.0,
+      "steps": 398,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 604.5,
+        "failure_penalty": 1590.0,
+        "distance_penalty": 0.0,
+        "completion_bonus": 0.0,
+        "total": -2194.5
+      },
+      "step_reward_total": -2194.5,
+      "total_distance": 0.0,
+      "ambulance_utilization": 0.0,
+      "avg_slack_at_dispatch": null,
+      "total_generated_calls": 26,
+      "served_calls": 0,
+      "served_rate": 0.0,
+      "failed_calls": 26,
+      "failed_rate": 1.0,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 29.076923076923077,
+      "response_time_all": null,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.0,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 11,
+          "served": 0,
+          "failed": 11,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 9,
+          "served": 0,
+          "failed": 9,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 6,
+          "served": 0,
+          "failed": 6,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1009,
+      "episode_return": -2634.048319444443,
+      "reset_reward": 0.0,
+      "steps": 360,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 691.5438194444445,
+        "failure_penalty": 2040.0,
+        "distance_penalty": 2.5045000000000033,
+        "completion_bonus": 100.0,
+        "total": -2634.048319444443
+      },
+      "step_reward_total": -2634.048319444443,
+      "total_distance": 50.09,
+      "ambulance_utilization": 0.052314814814814814,
+      "avg_slack_at_dispatch": 24.410500000000003,
+      "total_generated_calls": 39,
+      "served_calls": 2,
+      "served_rate": 0.05128205128205128,
+      "failed_calls": 37,
+      "failed_rate": 0.9487179487179487,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 21.207375356125358,
+      "response_time_all": 30.043819444444445,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.05128205128205128,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 20,
+          "served": 2,
+          "failed": 18,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 13,
+          "served": 0,
+          "failed": 13,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 6,
+          "served": 0,
+          "failed": 6,
+          "unresolved": 0
+        }
+      }
+    },
+    {
+      "seed": 1010,
+      "episode_return": -2735.0,
+      "reset_reward": 0.0,
+      "steps": 384,
+      "terminated": true,
+      "truncated": false,
+      "reward_breakdown": {
+        "wait_penalty": 665.0,
+        "failure_penalty": 2070.0,
+        "distance_penalty": 0.0,
+        "completion_bonus": 0.0,
+        "total": -2735.0
+      },
+      "step_reward_total": -2735.0,
+      "total_distance": 0.0,
+      "ambulance_utilization": 0.0,
+      "avg_slack_at_dispatch": null,
+      "total_generated_calls": 34,
+      "served_calls": 0,
+      "served_rate": 0.0,
+      "failed_calls": 34,
+      "failed_rate": 1.0,
+      "unresolved_calls": 0,
+      "high_severity_served": null,
+      "high_severity_served_rate": null,
+      "high_severity_failed": null,
+      "high_severity_failed_rate": null,
+      "avg_waiting": 25.823529411764707,
+      "response_time_all": null,
+      "high_severity_response_time": null,
+      "deadline_success_rate": 0.0,
+      "high_severity_deadline_success_rate": null,
+      "priority_violations": null,
+      "severity_breakdown": {
+        "1": {
+          "generated": 13,
+          "served": 0,
+          "failed": 13,
+          "unresolved": 0
+        },
+        "2": {
+          "generated": 14,
+          "served": 0,
+          "failed": 14,
+          "unresolved": 0
+        },
+        "3": {
+          "generated": 7,
+          "served": 0,
+          "failed": 7,
+          "unresolved": 0
+        }
+      }
+    }
+  ],
+  "summary": {
+    "episode_return": {
+      "n": 10,
+      "mean": -2859.116340619457,
+      "std": 389.71387600711284,
+      "min": -3654.5,
+      "max": -2194.5
+    },
+    "steps": {
+      "n": 10,
+      "mean": 389.5,
+      "std": 18.964440408301005,
+      "min": 360.0,
+      "max": 415.0
+    },
+    "total_generated_calls": {
+      "n": 10,
+      "mean": 35.0,
+      "std": 4.494441010848846,
+      "min": 26.0,
+      "max": 43.0
+    },
+    "served_calls": {
+      "n": 10,
+      "mean": 0.4,
+      "std": 0.6633249580710799,
+      "min": 0.0,
+      "max": 2.0
+    },
+    "served_rate": {
+      "n": 10,
+      "mean": 0.011164241164241164,
+      "std": 0.017958333099127907,
+      "min": 0.0,
+      "max": 0.05128205128205128
+    },
+    "failed_calls": {
+      "n": 10,
+      "mean": 34.6,
+      "std": 4.431703961232068,
+      "min": 26.0,
+      "max": 43.0
+    },
+    "failed_rate": {
+      "n": 10,
+      "mean": 0.9888357588357588,
+      "std": 0.01795833309912791,
+      "min": 0.9487179487179487,
+      "max": 1.0
+    },
+    "unresolved_calls": {
+      "n": 10,
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "high_severity_served": {
+      "n": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "high_severity_served_rate": {
+      "n": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "high_severity_failed": {
+      "n": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "high_severity_failed_rate": {
+      "n": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "avg_waiting": {
+      "n": 10,
+      "mean": 25.119493705111886,
+      "std": 2.952714172458624,
+      "min": 21.207375356125358,
+      "max": 30.723274
+    },
+    "response_time_all": {
+      "n": 3,
+      "mean": 31.825119092620724,
+      "std": 7.441514128686579,
+      "min": 23.733317833417715,
+      "max": 41.698220000000006
+    },
+    "high_severity_response_time": {
+      "n": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "deadline_success_rate": {
+      "n": 10,
+      "mean": 0.011164241164241164,
+      "std": 0.017958333099127907,
+      "min": 0.0,
+      "max": 0.05128205128205128
+    },
+    "high_severity_deadline_success_rate": {
+      "n": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "avg_slack_at_dispatch": {
+      "n": 3,
+      "mean": 11.623166666666672,
+      "std": 9.843675146452613,
+      "min": 0.46400000000000574,
+      "max": 24.410500000000003
+    },
+    "priority_violations": {
+      "n": 0,
+      "mean": null,
+      "std": null,
+      "min": null,
+      "max": null
+    },
+    "total_distance": {
+      "n": 10,
+      "mean": 9.341,
+      "std": 16.072024421335353,
+      "min": 0.0,
+      "max": 50.09
+    },
+    "ambulance_utilization": {
+      "n": 10,
+      "mean": 0.010674849037234419,
+      "std": 0.01773497027768186,
+      "min": 0.0,
+      "max": 0.052314814814814814
+    },
+    "reset_reward": {
+      "n": 10,
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0
+    },
+    "reward_wait_penalty": {
+      "n": 10,
+      "mean": 723.6492906194571,
+      "std": 91.56544075671682,
+      "min": 604.5,
+      "max": 924.5
+    },
+    "reward_failure_penalty": {
+      "n": 10,
+      "mean": 2157.0,
+      "std": 326.8348206663421,
+      "min": 1590.0,
+      "max": 2730.0
+    },
+    "reward_distance_penalty": {
+      "n": 10,
+      "mean": 0.4670500000000003,
+      "std": 0.8036012210667685,
+      "min": 0.0,
+      "max": 2.5045000000000033
+    },
+    "reward_completion_bonus": {
+      "n": 10,
+      "mean": 22.0,
+      "std": 35.4400902933387,
+      "min": 0.0,
+      "max": 100.0
+    },
+    "reward_total": {
+      "n": 10,
+      "mean": -2859.116340619457,
+      "std": 389.71387600711284,
+      "min": -3654.5,
+      "max": -2194.5
+    }
+  },
+  "verification": {
+    "q_table_unchanged": true,
+    "q_table_states_before": 27274,
+    "q_table_states_after": 27274,
+    "q_table_entries_before": 27774,
+    "q_table_entries_after": 27774,
+    "learning_updates": 0,
+    "evaluation_epsilon": 0.0,
+    "agent_epsilon_before": 0.6057704364907278,
+    "agent_epsilon_after": 0.6057704364907278
+  },
+  "limitations": [
+    "High-Severity is undefined in RL_ALGORITHM_STANDARD.md (V-03); high-severity KPI fields are null and severity 1/2/3 counts are retained.",
+    "Priority Violation has no approved definition in the standard (V-04); priority_violations is null rather than applying an unapproved heuristic.",
+    "Response Time uses arrived_at_scene_time - created_time for all severities; the required high-severity subset cannot be selected until its definition is agreed.",
+    "Ambulance Utilization is the post-step observation estimate: non-IDLE ambulance samples divided by ambulance_count * steps.",
+    "Dispatch ETA/Slack is calculated from the pre-dispatch Observation road graph and its current speed/length values; ETA is rounded to 0.001 minute.",
+    "t=0 reset reward is included in episode_return; reward_breakdown sums step() info only because reset() supplies no reward breakdown."
+  ]
+}

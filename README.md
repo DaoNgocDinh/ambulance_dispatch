@@ -232,7 +232,7 @@ Trong đó:
 ## 5. Hướng Dẫn Chạy Thử Nghiệm & Kiểm Thử
 
 ### 5.1. Chạy Mô Phỏng Toàn Diện (`run_simulation.py`)
-> **Lưu ý quan trọng:** `run_simulation.py` gọi `env.step(auto_dispatch=True)`, tức sử dụng **heuristic baseline** có sẵn trong môi trường (ưu tiên cuộc gọi mức độ nghiêm trọng cao hơn, sau đó chọn xe có ETA đến hiện trường ngắn nhất). Đây **không phải RL Agent** và không phải quá trình huấn luyện/đánh giá học tăng cường. Repository hiện chưa có entry point huấn luyện hoặc đánh giá RL hoàn chỉnh; chỉ có môi trường MDP và heuristic baseline này.
+> **Lưu ý:** `run_simulation.py` gọi `env.step(auto_dispatch=True)`, tức sử dụng **heuristic baseline** (ưu tiên cuộc gọi mức độ nghiêm trọng cao hơn, sau đó chọn xe có ETA ngắn nhất). Đây không phải SARSA.
 
 Chạy với bộ tham số mặc định (`num_ambulances = 6`, `poisson_lambda = 0.1`, `max_time = 360`, `max_overtime = 300`, `max_pending_calls = 3`, `seed = 42`):
 ```powershell
@@ -248,14 +248,34 @@ python run_simulation.py --ambulances 4 --poisson 0.2
 python run_simulation.py --ambulances 6 --poisson 0.1 --max_time 360 --max_overtime 300 --max_pending 3 --seed 42 --log simulation.log
 ```
 
-### 5.2. Chạy Toàn Bộ 37 Unit Tests Kiểm Thử
+### 5.2. Huấn luyện và xuất báo cáo chạy SARSA
+Huấn luyện agent và lưu Q-table vào checkpoint. `--seed` là seed gốc; từng episode nhận một seed ngẫu nhiên tái lập được:
+```powershell
+python run_sarsa.py --train-episodes 3000 --seed 42 --epsilon-min 0.02 --checkpoint sarsa_policy_coverage_3000_seed42.json
+```
+
+State SARSA gồm năm đặc trưng rời rạc: số xe rảnh (0..6), khoảng cách gần nhất (gần/vừa/xa), deadline (gấp/bình thường), số cuộc gọi chờ (0/1/2+), và số xe rảnh trong vùng phủ trung tâm (0..6), tối đa 882 state. Q-table chọn giữa sáu meta-action: xe gần nhất, xe gần thứ nhì, xe ít km nhất, xe vùng rìa gần nhất khi có hai xe đủ khả năng hoàn hảo, tái bố trí một xe rảnh đang tụ cụm về trung tâm khi không có cuộc gọi chờ, và no-op. No-op bị mask khi có xe rảnh cùng cuộc gọi chờ.
+
+Reward shaping chỉ áp dụng khi train: phạt chờ mục tiêu `-0.175/phút`, phạt thất bại `-40`, thưởng hoàn thành `+80` nếu hoàn hảo và `+15` nếu đúng hạn, cộng bonus dispatch dựa trên ETA/deadline và phạt Load Balancing nếu làm mất mốc hoàn hảo ở ca khẩn. Công thức reward Environment gốc không bị sửa; evaluation chỉ báo reward gốc. Epsilon giảm theo lịch mũ mượt và chạm `0.02` tại 85% chặng huấn luyện. Báo cáo training nêu số unique states trong Q-table.
+
+Chạy **một episode đánh giá** bằng policy đã học. Episode chạy greedy (`epsilon = 0`), không tiếp tục cập nhật Q-table:
+```powershell
+python run_sarsa_simulation.py --checkpoint sarsa_policy_coverage_3000_seed42.json --seed 50001 --log sarsa_coverage_seed50001.log
+```
+
+Để đánh giá checkpoint trên 10 seed cố định và xem bảng tổng hợp:
+```powershell
+python evaluate_sarsa.py --checkpoint sarsa_policy_meta.json
+```
+
+Reroute do giao thông đổi tuyến chỉ xảy ra nếu ETA mới giảm ít nhất 25%. Với cuộc gọi mới, xe đang đến hiện trường chỉ được chuyển nhiệm vụ nếu ETA mới tốt hơn ít nhất 25% hoặc mức độ nghiêm trọng cao hơn, đồng thời một xe rảnh khác có thể nhận ca cũ trước deadline. Checkpoint dùng state/action version mới, không tương thích với checkpoint SARSA cũ nên cần huấn luyện lại. Mỗi 500 episode có log reward, số ca phục vụ/tổng ca phát sinh, quãng đường và tỷ lệ no-op.
+
+### 5.3. Chạy Unit Tests
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-Kết quả lần chạy gần nhất trong M3: **37/37 test đạt** (xem `M3_IMPLEMENTATION_REPORT.md`). M4 chỉ cập nhật tài liệu, không chạy lại test suite.
-
-### 5.3. Vẽ Bản Đồ Mạng Lưới 80 Nút & 4 Bệnh Viện
+### 5.4. Vẽ Bản Đồ Mạng Lưới 80 Nút & 4 Bệnh Viện
 ```powershell
 python visualize_map.py
 ```

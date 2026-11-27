@@ -578,6 +578,40 @@ class TestDispatchEnv(unittest.TestCase):
         self.assertFalse(env.is_action_valid(invalid_act_id))
         self.assertFalse(env.is_action_valid([(1, 10), (4, 12)]))
 
+    def test_action_mask_cache_returns_independent_copy(self) -> None:
+        env = AmbulanceDispatchEnv(num_ambulances=2, seed=42)
+        env.reset(generate_initial_calls=False)
+
+        first_mask = env.get_action_mask()
+        first_mask[0] = False
+
+        self.assertTrue(env.get_action_mask()[0])
+
+    def test_idle_reposition_moves_clustered_ambulance_over_time(self) -> None:
+        env = AmbulanceDispatchEnv(seed=42, poisson_lambda=0.0)
+        env.reset(generate_initial_calls=False)
+        for ambulance_id in (1, 2):
+            ambulance = env.ambulances[ambulance_id]
+            ambulance.current_edge = (67, 74)
+            ambulance.distance_from_start = 0.5
+            ambulance.route_edges = [(67, 74)]
+
+        self.assertTrue(env.can_reposition_idle_ambulance())
+        self.assertTrue(env.request_idle_reposition())
+        repositioning = [
+            ambulance for ambulance in env.ambulances.values()
+            if ambulance.is_repositioning
+        ]
+        self.assertEqual(len(repositioning), 1)
+        ambulance = repositioning[0]
+        initial_distance = ambulance.total_distance_traveled
+
+        env.step(0)
+
+        self.assertGreater(ambulance.total_distance_traveled, initial_distance)
+        self.assertEqual(ambulance.status, AmbulanceStatus.IDLE)
+        self.assertGreater(ambulance.last_step_distance, 0.0)
+
     def test_simultaneous_joint_action_step(self) -> None:
         """
         Kiểm tra thực thi bước mô phỏng step() với tập các cặp phân công đồng thời
