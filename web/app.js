@@ -118,6 +118,8 @@ const dom = {
   btnZoomIn: document.getElementById('btn-zoom-in'),
   btnZoomOut: document.getElementById('btn-zoom-out'),
   btnZoomFit: document.getElementById('btn-zoom-fit'),
+  btnFullscreen: document.getElementById('btn-fullscreen'),
+  btnFullscreenHeader: document.getElementById('btn-fullscreen-header'),
 
   // Mode & Policy
   algoSelect: document.getElementById('algo-select'),
@@ -1201,6 +1203,50 @@ function setupEventListeners() {
   });
   dom.btnZoomFit.addEventListener('click', fitMapToCanvas);
 
+  // Fullscreen Mode Toggle (Hỗ trợ toàn màn hình)
+  function toggleFullScreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.warn('Lỗi khi mở Fullscreen:', err);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch((err) => {
+          console.warn('Lỗi khi thoát Fullscreen:', err);
+        });
+      }
+    }
+  }
+
+  function updateFullScreenUI() {
+    const isFS = !!document.fullscreenElement;
+    if (dom.btnFullscreen) {
+      dom.btnFullscreen.textContent = isFS ? '🗗 Thu nhỏ' : '⛶ Toàn màn hình';
+      if (isFS) dom.btnFullscreen.classList.add('active');
+      else dom.btnFullscreen.classList.remove('active');
+    }
+    if (dom.btnFullscreenHeader) {
+      const fsIcon = document.getElementById('fs-header-icon');
+      const fsLabel = document.getElementById('fs-header-label');
+      if (fsIcon) fsIcon.textContent = isFS ? '🗗' : '⛶';
+      if (fsLabel) fsLabel.textContent = isFS ? 'Thu Nhỏ' : 'Toàn Màn Hình';
+      if (isFS) dom.btnFullscreenHeader.classList.add('active');
+      else dom.btnFullscreenHeader.classList.remove('active');
+    }
+    setTimeout(() => {
+      resizeCanvas();
+      fitMapToCanvas();
+    }, 150);
+  }
+
+  if (dom.btnFullscreen) {
+    dom.btnFullscreen.addEventListener('click', toggleFullScreen);
+  }
+  if (dom.btnFullscreenHeader) {
+    dom.btnFullscreenHeader.addEventListener('click', toggleFullScreen);
+  }
+  document.addEventListener('fullscreenchange', updateFullScreenUI);
+
   // Canvas Mouse Interactions
   dom.canvas.addEventListener('mousedown', (e) => {
     state.view.isDragging = true;
@@ -1381,6 +1427,9 @@ function setupEventListeners() {
     } else if (e.code === 'ArrowRight') {
       e.preventDefault();
       stepSimulation(1);
+    } else if (e.key === 'f' || e.key === 'F') {
+      e.preventDefault();
+      toggleFullScreen();
     }
   });
 }
